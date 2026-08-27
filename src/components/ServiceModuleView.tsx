@@ -13,7 +13,10 @@ import {
 import ServiceFilterDropdown from "@/components/ServiceFilterDropdown";
 import { Dropdown } from "@/components/Dropdown";
 import { downloadCSV, exportPrintablePDF, ExportDataRow } from "@/utils/export";
+main
 import { useTheme } from "@/components/ThemeProvider";
+
+main
 import { createClient } from "@/lib/supabase/client";
 
 interface ServiceModuleViewProps {
@@ -270,7 +273,7 @@ export default function ServiceModuleView({ moduleType }: ServiceModuleViewProps
               />
             )}
             {normalizedType === "seo-tracked" && <SeoTrackingDashboard />}
-            {normalizedType === "geo-tracked" && <GeoTrackingDashboard />}
+            {normalizedType === "geo-tracked" && <GeoTrackingDashboard dateRange={dateRange} />}
           </motion.div>
         )}
       </AnimatePresence>
@@ -608,6 +611,9 @@ function GeoTrackingDashboard({ dateRange = "30d" }: { dateRange?: string }) {
 
   const metrics = React.useMemo(() => {
     if (!results || results.length === 0) {
+main
+      // Fallback scale based on selected range when database table has 0 records
+main
       const scaleMap: Record<string, { chat: string; cp: string; gem: string; gp: string; cl: string; clp: string; px: string; pxp: string; total: string }> = {
         "7d":  { chat: "91%", cp: "340 Prompts Cited",  gem: "85%", gp: "290 Prompts Cited",  cl: "88%", clp: "215 Prompts Cited",  px: "94%", pxp: "380 Prompts Cited",  total: "1,225 Total AI Citations" },
         "30d": { chat: "88%", cp: "1,420 Prompts Cited", gem: "82%", gp: "1,180 Prompts Cited", cl: "85%", clp: "890 Prompts Cited",  px: "92%", pxp: "1,540 Prompts Cited", total: "3,890 Total AI Citations" },
@@ -616,6 +622,7 @@ function GeoTrackingDashboard({ dateRange = "30d" }: { dateRange?: string }) {
       };
       const def = scaleMap[dateRange] || scaleMap["30d"];
       return {
+  main
         chatgptScore: def.chat, chatgptPrompts: def.cp,
         geminiScore: def.gem,  geminiPrompts: def.gp,
         claudeScore: def.cl,   claudePrompts: def.clp,
@@ -626,6 +633,25 @@ function GeoTrackingDashboard({ dateRange = "30d" }: { dateRange?: string }) {
           { h: 60, label: "W1" }, { h: 80, label: "W2" },
           { h: 110, label: "W3" }, { h: 140, label: "W4" },
           { h: 160, label: "W5" }, { h: 180, label: "W6" }
+
+        chatgptScore: def.chat,
+        chatgptPrompts: def.cp,
+        geminiScore: def.gem,
+        geminiPrompts: def.gp,
+        claudeScore: def.cl,
+        claudePrompts: def.clp,
+        perplexityScore: def.px,
+        perplexityPrompts: def.pxp,
+        sentimentScore: "91% Positive / Neutral",
+        totalCitations: def.total,
+        trendHeights: [
+          { h: 60, label: "W1" },
+          { h: 80, label: "W2" },
+          { h: 110, label: "W3" },
+          { h: 140, label: "W4" },
+          { h: 160, label: "W5" },
+          { h: 180, label: "W6" }
+main
         ],
         competitorShares: [
           { brand: "SearchIntel (Your Brand)", share: "48.5%", color: "bg-emerald-500" },
@@ -637,6 +663,7 @@ function GeoTrackingDashboard({ dateRange = "30d" }: { dateRange?: string }) {
     }
 
     const calcEngine = (engineName: string) => {
+main
       const engineRows = results.filter(r => r.ai_engine === engineName || (!r.ai_engine && engineName === "chatgpt"));
       const total = engineRows.length || 1;
       const cited = engineRows.filter(r => r.client_cited || r.mentioned_in_text || r.gap_label === "aligned" || r.gap_label === "geo_cited").length;
@@ -649,10 +676,26 @@ function GeoTrackingDashboard({ dateRange = "30d" }: { dateRange?: string }) {
     const perplexity = calcEngine("perplexity");
 
     const totalCitedCount = results.filter(r => r.client_cited || r.mentioned_in_text || r.gap_label === "aligned" || r.gap_label === "geo_cited").length;
+            
+      const engineRows = results.filter(r => r.ai_engine === engineName || (!r.ai_engine && engineName === 'chatgpt'));
+      const total = engineRows.length || 1;
+      const cited = engineRows.filter(r => r.client_cited || r.mentioned_in_text || r.gap_label === 'aligned' || r.gap_label === 'geo_cited').length;
+      const score = Math.round((cited / total) * 100);
+      return { score: `${score}%`, prompts: `${cited} Prompts Cited` };
+    };
+
+    const chatgpt = calcEngine("chatgpt");
+    const gemini = calcEngine("gemini");
+    const claude = calcEngine("claude");
+    const perplexity = calcEngine("perplexity");
+
+    const totalCitedCount = results.filter(r => r.client_cited || r.mentioned_in_text || r.gap_label === 'aligned' || r.gap_label === 'geo_cited').length;
+main
     const sentimentPercent = results.length > 0 ? Math.round(((totalCitedCount + 1) / (results.length + 1)) * 100) : 100;
     const clientShare = Math.round((totalCitedCount / Math.max(1, results.length)) * 100);
 
     return {
+main
       chatgptScore: chatgpt.score,   chatgptPrompts: chatgpt.prompts,
       geminiScore: gemini.score,     geminiPrompts: gemini.prompts,
       claudeScore: claude.score,     claudePrompts: claude.prompts,
@@ -662,6 +705,20 @@ function GeoTrackingDashboard({ dateRange = "30d" }: { dateRange?: string }) {
       trendHeights: [
         { h: Math.min(180, Math.max(40, totalCitedCount * 10)),  label: "W1" },
         { h: Math.min(180, Math.max(70, totalCitedCount * 14)),  label: "W2" },
+      chatgptScore: chatgpt.score,
+      chatgptPrompts: chatgpt.prompts,
+      geminiScore: gemini.score,
+      geminiPrompts: gemini.prompts,
+      claudeScore: claude.score,
+      claudePrompts: claude.prompts,
+      perplexityScore: perplexity.score,
+      perplexityPrompts: perplexity.prompts,
+      sentimentScore: `${sentimentPercent}% Positive / Neutral`,
+      totalCitations: `${totalCitedCount} Total AI Citations`,
+      trendHeights: [
+        { h: Math.min(180, Math.max(40, totalCitedCount * 10)), label: "W1" },
+        { h: Math.min(180, Math.max(70, totalCitedCount * 14)), label: "W2" },
+main
         { h: Math.min(180, Math.max(100, totalCitedCount * 18)), label: "W3" },
         { h: Math.min(180, Math.max(140, totalCitedCount * 22)), label: "W4" }
       ],

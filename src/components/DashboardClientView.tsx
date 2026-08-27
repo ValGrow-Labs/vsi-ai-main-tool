@@ -51,8 +51,10 @@ export default function DashboardClientView({
  rawResults,
  maxClients,
 }: DashboardClientViewProps) {
+main
   const { theme } = useTheme();
   const isDark = theme === "dark";
+main
   const [dateRange, setDateRange] = useState("30d");
   const [serviceFilter, setServiceFilter] = useState("all");
 

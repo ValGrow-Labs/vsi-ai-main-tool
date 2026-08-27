@@ -219,14 +219,20 @@ export function Dropdown({ options, value, onChange, trigger, variant = "default
                           role="option"
                           aria-selected={isSelected}
                           tabIndex={isActive ? 0 : -1}
-                          onClick={() => handleSelect(option.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") {
+                          {...getItemProps({
+                            onClick: (e: React.MouseEvent) => {
                               e.preventDefault();
+                              e.stopPropagation();
                               handleSelect(option.value);
+                            },
+                            onKeyDown: (e: React.KeyboardEvent) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                handleSelect(option.value);
+                              }
                             }
-                          }}
-                          {...getItemProps()}
+                          })}
                           className={`
                             flex items-center justify-between outline-none cursor-pointer ${variant === "default" ? 'rounded-[8px]' : 'rounded-none'}
                             transition-colors duration-150 shrink-0

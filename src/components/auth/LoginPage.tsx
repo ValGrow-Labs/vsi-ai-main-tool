@@ -62,47 +62,45 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
     const isPlaceholderSupabase = !url || url.includes("dummy") || url.includes("your-project.supabase.co");
 
-    if (!isPlaceholderSupabase) {
-      try {
-        const supabase = createClient();
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: cleanEmail,
-          password: password,
-        });
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password: password,
+      });
 
-        if (!error && data?.session && data?.user) {
-          if (!isAuthorizedEmail(data.user.email)) {
-            await supabase.auth.signOut();
-            setAuthError('Invalid email or password.');
-            setIsLoading(false);
-            return;
-          }
-
-          const userProfile: UserProfile = {
-            name: data.user.user_metadata?.full_name || 'VALGROW LABS',
-            email: data.user.email!,
-            role: 'Administrator',
-            company: 'Valgrow Enterprise',
-            plan: 'VSI GEO Platform Pro',
-          };
-
-          completeAuthentication(userProfile);
+      if (!error && data?.session && data?.user) {
+        if (!isAuthorizedEmail(data.user.email)) {
+          await supabase.auth.signOut();
+          setAuthError('Invalid email or password.');
+          setIsLoading(false);
           return;
         }
-      } catch {
-        // Fall through if Supabase request fails
+
+        const userProfile: UserProfile = {
+          name: data.user.user_metadata?.full_name || 'VALGROW LABS',
+          email: data.user.email!,
+          role: 'Administrator',
+          company: 'Valgrow Enterprise',
+          plan: 'VSI GEO Platform Pro',
+        };
+
+        completeAuthentication(userProfile);
+        return;
       }
+    } catch {
+      // Fall through if Supabase request fails or offline
     }
 
-    // Local / Dev Fallback validation check for pre-created user credential:
-    // Email: valgrowlabs444@gmail.com, Password: ValGrowLabs@174
-    if (cleanEmail === "valgrowlabs444@gmail.com" && password === "ValGrowLabs@174") {
+    // Local / Dev Fallback: If running in local dev without real Supabase connection,
+    // allow authorized ValGrow email session creation once authenticated
+    if (isPlaceholderSupabase) {
       const userProfile: UserProfile = {
         name: "VALGROW LABS",
-        email: "valgrowlabs444@gmail.com",
+        email: cleanEmail,
         role: "Administrator",
         company: "Valgrow Enterprise",
         plan: "VSI GEO Platform Pro",

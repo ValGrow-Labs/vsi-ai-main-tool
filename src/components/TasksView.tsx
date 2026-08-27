@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { createClient } from "@/lib/supabase/client";
 import { 
   Clock, CheckCircle, Circle, AlertCircle, Plus, ListChecks, X, Tag, User, AlertTriangle 
 } from "lucide-react";
@@ -70,6 +71,33 @@ export default function TasksView() {
   const [newGroup, setNewGroup] = useState("Content");
   const [newOwner, setNewOwner] = useState("SEO");
 
+  useEffect(() => {
+    async function loadTasksFromSupabase() {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase.from("tasks").select("*").order("created_at", { ascending: false });
+        if (!error && data && data.length > 0) {
+          const mapped: TaskItem[] = data.map((t: any) => ({
+            id: t.id,
+            client_id: t.client_id || "1",
+            client_name: t.client_name || "Enterprise Client",
+            title: t.title,
+            status: t.status === "completed" || t.status === "done" ? "done" : t.status === "in_progress" ? "in_progress" : "todo",
+            priority: t.priority === "high" ? 1 : t.priority === "low" ? 3 : 2,
+            group: t.group || "Content",
+            owner: t.owner || "SEO",
+            keyword: t.keyword || null,
+            stale: Boolean(t.stale),
+          }));
+          setTasks(mapped);
+        }
+      } catch (err) {
+        console.error("Error loading tasks from Supabase:", err);
+      }
+    }
+    loadTasksFromSupabase();
+  }, []);
+
   const counts = {
     all: tasks.length,
     open: tasks.filter(t => t.status !== "done").length,
@@ -94,7 +122,7 @@ export default function TasksView() {
     byClient.set(t.client_id, entry);
   }
 
-  const handleCreateTask = (e: React.FormEvent) => {
+  const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim()) return;
 
@@ -114,17 +142,34 @@ export default function TasksView() {
     setTasks([newTaskItem, ...tasks]);
     setNewTitle("");
     setShowModal(false);
+
+    try {
+      const supabase = createClient();
+      await supabase.from("tasks").insert({
+        title: newTaskItem.title,
+        status: "todo",
+        priority: "medium",
+      });
+    } catch {}
   };
 
-  const toggleTaskStatus = (id: string) => {
-    setTasks(prev => prev.map(t => {
-      if (t.id !== id) return t;
-      let nextStatus: TaskItem["status"] = "todo";
-      if (t.status === "todo") nextStatus = "in_progress";
-      else if (t.status === "in_progress") nextStatus = "done";
-      else nextStatus = "todo";
-      return { ...t, status: nextStatus };
-    }));
+  const toggleTaskStatus = async (id: string) => {
+    const currentTask = tasks.find(t => t.id === id);
+    if (!currentTask) return;
+
+    let nextStatus: TaskItem["status"] = "todo";
+    if (currentTask.status === "todo") nextStatus = "in_progress";
+    else if (currentTask.status === "in_progress") nextStatus = "done";
+    else nextStatus = "todo";
+
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, status: nextStatus } : t));
+
+    try {
+      const supabase = createClient();
+      await supabase.from("tasks").update({
+        status: nextStatus === "done" ? "completed" : nextStatus
+      }).eq("id", id);
+    } catch {}
   };
 
   return (

@@ -2,9 +2,15 @@
 
 import { MessageSquarePlus } from "lucide-react";
 import { useFeedback } from "@/contexts/FeedbackContext";
+import { usePathname } from "next/navigation";
 
 export default function FeedbackButton() {
   const { openFeedback } = useFeedback();
+  const pathname = usePathname();
+
+  if (pathname?.startsWith("/dashboard/feedback")) {
+    return null;
+  }
 
   return (
     <div className="fixed bottom-6 left-6 md:left-72 z-40 group">
