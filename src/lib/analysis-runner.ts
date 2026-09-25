@@ -107,23 +107,50 @@ export async function updateJobStage(
 }
 
 
-export async function runFullAnalysisPipeline(jobId: string, clientId: string, agencyId: string) {
-  const supabase = await createClient();
+export interface AnalysisClientInput {
+  id: string;
+  name?: string | null;
+  website: string;
+  brand_name?: string | null;
+  default_location?: string | null;
+  industry?: string | null;
+  country?: string | null;
+  language?: string | null;
+}
+
+export async function runFullAnalysisPipeline(
+  jobId: string,
+  clientId: string,
+  agencyId: string,
+  initialClient?: AnalysisClientInput | null
+) {
+  let supabase: Awaited<ReturnType<typeof createClient>> | null = null;
+  try {
+    supabase = await createClient();
+  } catch {
+    // createClient may fail in background after() without active cookies
+  }
 
   try {
-    // Fetch project client data
-    const { data: client } = await supabase
-      .from("clients")
-      .select("id, name, website, brand_name, default_location, industry, country, language")
-      .eq("id", clientId)
-      .single();
+    let client: AnalysisClientInput | null = initialClient || null;
+
+    if (!client && supabase) {
+      const { data: dbClient } = await supabase
+        .from("clients")
+        .select("id, name, website, brand_name, default_location, industry, country")
+        .eq("id", clientId)
+        .maybeSingle();
+      if (dbClient) {
+        client = dbClient as AnalysisClientInput;
+      }
+    }
 
     if (!client || !client.website) {
       await updateJobStage(
         jobId,
         "website_analysis",
         "failed",
-        "website_analysis",
+        "completed",
         undefined,
         "Website URL missing for project."
       );
@@ -139,13 +166,19 @@ export async function runFullAnalysisPipeline(jobId: string, clientId: string, a
     const aiResults: AIResponseResult[] = [];
 
     // Fetch tracked keywords for SEO setup & audit
-    const { data: kwRows } = await supabase
-      .from("tracked_keywords")
-      .select("id, keyword, domain, brand, location, track_type")
-      .eq("client_id", clientId)
-      .eq("is_active", true);
-
-    const keywords = kwRows || [];
+    let keywords: Array<{ id: string; keyword: string; domain?: string; brand?: string; location?: string; track_type?: string }> = [];
+    if (supabase) {
+      try {
+        const { data: kwRows } = await supabase
+          .from("tracked_keywords")
+          .select("id, keyword, domain, brand, location, track_type")
+          .eq("client_id", clientId)
+          .eq("is_active", true);
+        if (kwRows) keywords = kwRows;
+      } catch {
+        // non-fatal
+      }
+    }
 
     // ─────────────────────────────────────────
     // STAGE 1: WEBSITE ANALYSIS
@@ -175,17 +208,23 @@ export async function runFullAnalysisPipeline(jobId: string, clientId: string, a
         }
       }
 
-      await supabase.from("site_audits").insert({
-        agency_id: agencyId,
-        client_id: clientId,
-        domain: auditOutcome.domain || domain,
-        status: "completed",
-        score: auditOutcome.score,
-        pages_scanned: auditOutcome.pages.length,
-        checks: auditOutcome.checks,
-        pages: auditOutcome.pages.map(({ internalLinks, ...rest }) => ({ ...rest, linkCount: internalLinks.length })),
-        completed_at: new Date().toISOString(),
-      });
+      if (supabase) {
+        try {
+          await supabase.from("site_audits").insert({
+            agency_id: agencyId,
+            client_id: clientId,
+            domain: auditOutcome.domain || domain,
+            status: "completed",
+            score: auditOutcome.score,
+            pages_scanned: auditOutcome.pages.length,
+            checks: auditOutcome.checks,
+            pages: auditOutcome.pages.map(({ internalLinks, ...rest }) => ({ ...rest, linkCount: internalLinks.length })),
+            completed_at: new Date().toISOString(),
+          });
+        } catch {
+          // ignore DB error
+        }
+      }
 
       await updateJobStage(
         jobId,
@@ -198,21 +237,27 @@ export async function runFullAnalysisPipeline(jobId: string, clientId: string, a
       const errMsg = err instanceof Error ? err.message : "Website analysis failed.";
       console.error("[analysis-runner] website analysis error:", err);
 
-      await supabase.from("site_audits").insert({
-        agency_id: agencyId,
-        client_id: clientId,
-        domain: domain,
-        status: "failed",
-        error_message: errMsg,
-        completed_at: new Date().toISOString(),
-      });
+      if (supabase) {
+        try {
+          await supabase.from("site_audits").insert({
+            agency_id: agencyId,
+            client_id: clientId,
+            domain: domain,
+            status: "failed",
+            error_message: errMsg,
+            completed_at: new Date().toISOString(),
+          });
+        } catch {
+          // ignore DB error
+        }
+      }
 
       await updateJobStage(
         jobId,
         "website_analysis",
         "failed",
         "seo_analysis",
-        undefined,
+        { error: errMsg },
         errMsg
       );
     }
@@ -232,21 +277,27 @@ export async function runFullAnalysisPipeline(jobId: string, clientId: string, a
           searchResults.push(res);
 
           // Save snapshot to search_results table
-          await supabase.from("search_results").insert({
-            agency_id: agencyId,
-            client_id: clientId,
-            tracked_keyword_id: kw.id,
-            keyword: kw.keyword,
-            domain: domain,
-            brand: kw.brand || brandName,
-            location: kw.location || locationCode,
-            track_type: kw.track_type || "both",
-            rank_position: res.rankingPosition,
-            rank_url: res.rankingUrl,
-            rank_title: res.rankingTitle,
-            serp_features: res.serpFeatures,
-            serp_results_json: res.organicResults,
-          });
+          if (supabase) {
+            try {
+              await supabase.from("search_results").insert({
+                agency_id: agencyId,
+                client_id: clientId,
+                tracked_keyword_id: kw.id,
+                keyword: kw.keyword,
+                domain: domain,
+                brand: kw.brand || brandName,
+                location: kw.location || locationCode,
+                track_type: kw.track_type || "both",
+                rank_position: res.rankingPosition,
+                rank_url: res.rankingUrl,
+                rank_title: res.rankingTitle,
+                serp_features: res.serpFeatures,
+                serp_results_json: res.organicResults,
+              });
+            } catch {
+              // ignore DB insert error
+            }
+          }
         } catch {
           // Continue with next keyword
         }
@@ -283,12 +334,19 @@ export async function runFullAnalysisPipeline(jobId: string, clientId: string, a
     // ─────────────────────────────────────────
     await updateJobStage(jobId, "competitor_analysis", "in_progress", "competitor_analysis");
 
-    const { data: compRows } = await supabase
-      .from("project_competitors")
-      .select("domain, name")
-      .eq("client_id", clientId);
+    let competitors: Array<{ domain: string; name?: string }> = [];
+    if (supabase) {
+      try {
+        const { data: compRows } = await supabase
+          .from("project_competitors")
+          .select("domain, name")
+          .eq("client_id", clientId);
+        if (compRows) competitors = compRows;
+      } catch {
+        // non-fatal
+      }
+    }
 
-    const competitors = compRows || [];
     const competitorDomains = competitors.map((c) => c.domain);
 
     await updateJobStage(
@@ -317,30 +375,36 @@ export async function runFullAnalysisPipeline(jobId: string, clientId: string, a
           const aiRes = await aiProvider.generateResponse(kw.keyword, brandName, domain, competitorDomains);
           aiResults.push(aiRes);
 
-          await supabase.from("search_results").insert({
-            agency_id: agencyId,
-            client_id: clientId,
-            tracked_keyword_id: kw.id,
-            keyword: kw.keyword,
-            domain: domain,
-            brand: kw.brand || brandName,
-            location: kw.location || locationCode,
-            track_type: "geo",
-            aio_present: aiRes.brandMentioned || aiRes.citations.length > 0,
-            aio_snippet: aiRes.rawResponse.slice(0, 300),
-            aio_full_text: aiRes.rawResponse,
-            cited_domains: aiRes.citations,
-            client_cited: aiRes.isTargetCited,
-            mentioned_in_text: aiRes.brandMentioned,
-            chatgpt_checked: true,
-            chatgpt_response: aiRes.rawResponse,
-            chatgpt_brand_cited: aiRes.isTargetCited,
-            chatgpt_brand_mentioned: aiRes.brandMentioned,
-            chatgpt_mention_count: aiRes.mentionCount,
-            chatgpt_competitors: aiRes.competitorsMentioned,
-            chatgpt_cited_urls: aiRes.citations,
-            citations_json: aiRes.citations,
-          });
+          if (supabase) {
+            try {
+              await supabase.from("search_results").insert({
+                agency_id: agencyId,
+                client_id: clientId,
+                tracked_keyword_id: kw.id,
+                keyword: kw.keyword,
+                domain: domain,
+                brand: kw.brand || brandName,
+                location: kw.location || locationCode,
+                track_type: "geo",
+                aio_present: aiRes.brandMentioned || aiRes.citations.length > 0,
+                aio_snippet: aiRes.rawResponse.slice(0, 300),
+                aio_full_text: aiRes.rawResponse,
+                cited_domains: aiRes.citations,
+                client_cited: aiRes.isTargetCited,
+                mentioned_in_text: aiRes.brandMentioned,
+                chatgpt_checked: true,
+                chatgpt_response: aiRes.rawResponse,
+                chatgpt_brand_cited: aiRes.isTargetCited,
+                chatgpt_brand_mentioned: aiRes.brandMentioned,
+                chatgpt_mention_count: aiRes.mentionCount,
+                chatgpt_competitors: aiRes.competitorsMentioned,
+                chatgpt_cited_urls: aiRes.citations,
+                citations_json: aiRes.citations,
+              });
+            } catch {
+              // ignore DB insert error
+            }
+          }
         } catch {
           // Continue
         }

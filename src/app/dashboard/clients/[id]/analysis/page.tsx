@@ -135,7 +135,6 @@ export default function AnalysisProgressPage({ params }: { params: Promise<{ id:
   }
 
   const isCompleted = job?.status === "completed" || job?.stage === "completed";
-  const isFailed = job?.status === "failed";
   const stageStatuses = job?.stage_statuses || {
     website_analysis: "in_progress",
     seo_analysis: "pending",
@@ -143,6 +142,8 @@ export default function AnalysisProgressPage({ params }: { params: Promise<{ id:
     geo_analysis: "pending",
     results_prep: "pending",
   };
+  const hasAnyFailed = Object.values(stageStatuses).some((s) => s === "failed");
+  const isFailed = job?.status === "failed" || hasAnyFailed;
 
   return (
     <div className="mx-auto w-full max-w-[720px] animate-fade-in space-y-8 px-4 py-10 md:py-16">
@@ -167,7 +168,7 @@ export default function AnalysisProgressPage({ params }: { params: Promise<{ id:
               Analysis couldn&apos;t be completed
             </h1>
             <p className="text-base text-critical max-w-[550px] mx-auto font-medium">
-              {job?.error_message || "One or more analysis modules encountered a temporary provider issue."}
+              {job?.error_message || (job?.stages_data as any)?.website_analysis?.error || "One or more analysis modules encountered an issue."}
             </p>
           </>
         ) : (
@@ -197,6 +198,7 @@ export default function AnalysisProgressPage({ params }: { params: Promise<{ id:
           const isUnconfigured = status === "unconfigured";
           const isRunning = status === "in_progress";
           const isStageFailed = status === "failed";
+          const stageSpecificError = (job?.stages_data as any)?.[cfg.key]?.error;
           const Icon = cfg.icon;
 
           return (
@@ -238,7 +240,9 @@ export default function AnalysisProgressPage({ params }: { params: Promise<{ id:
                     <p className="text-caption text-ink-3">Analysis provider not configured (Data unavailable)</p>
                   )}
                   {isStageFailed && (
-                    <p className="text-caption text-critical">Module unavailable — retry below</p>
+                    <p className="text-caption text-critical">
+                      {stageSpecificError || "Module unavailable — retry below"}
+                    </p>
                   )}
                 </div>
               </div>
@@ -276,21 +280,34 @@ export default function AnalysisProgressPage({ params }: { params: Promise<{ id:
       {/* Action Buttons */}
       <div className="flex flex-wrap items-center justify-center gap-4 pt-2">
         {isCompleted ? (
-          <button
-            type="button"
-            onClick={() => router.push(`/dashboard/clients/${clientId}`)}
-            className="flex h-12 items-center gap-2 rounded-xl bg-brand-strong px-8 text-body font-semibold text-white shadow-md transition-all hover:bg-brand active:scale-[0.99]"
-          >
-            <span>View Results</span>
-            <ArrowRight className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => router.push(`/dashboard/clients/${clientId}`)}
+              className="flex h-12 items-center gap-2 rounded-xl bg-brand-strong px-8 text-body font-semibold text-white shadow-md transition-all hover:bg-brand active:scale-[0.99]"
+            >
+              <span>View Results</span>
+              <ArrowRight className="h-5 w-5" />
+            </button>
+            {hasAnyFailed && (
+              <button
+                type="button"
+                onClick={handleRetry}
+                disabled={retrying}
+                className="flex h-12 items-center gap-2 rounded-xl border border-line bg-surface px-5 text-body font-medium text-ink hover:bg-surface-2 disabled:opacity-50"
+              >
+                <RotateCcw className={`h-4 w-4 ${retrying ? "animate-spin" : ""}`} />
+                <span>Retry Analysis</span>
+              </button>
+            )}
+          </div>
         ) : isFailed ? (
           <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={handleRetry}
               disabled={retrying}
-              className="flex h-11 items-center gap-2 rounded-xl bg-ink px-5 text-body font-semibold text-white shadow-sm hover:bg-ink-2 disabled:opacity-50"
+              className="flex h-11 items-center gap-2 rounded-xl bg-brand-strong px-6 text-body font-semibold text-white shadow-sm hover:bg-brand disabled:opacity-50"
             >
               <RotateCcw className={`h-4 w-4 ${retrying ? "animate-spin" : ""}`} />
               <span>Retry Analysis</span>

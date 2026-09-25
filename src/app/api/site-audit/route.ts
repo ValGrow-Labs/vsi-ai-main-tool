@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
   const supabase = await createClient();
   let clientQuery = supabase
     .from("clients")
-    .select("id, agency_id, website, country, default_location, language")
+    .select("id, agency_id, website, country, default_location")
     .eq("id", clientId);
   if (session.role !== "super_admin") clientQuery = clientQuery.eq("agency_id", session.agencyId);
   const { data: client } = await clientQuery.maybeSingle();

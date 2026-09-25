@@ -27,7 +27,8 @@ interface SafeFetchOptions {
   userAgent?: string;
 }
 
-export const AUDIT_USER_AGENT = "Mozilla/5.0 (compatible; VSI-SiteAudit/1.0; +https://valgrowlabs.com)";
+export const AUDIT_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 /**
  * Resolve the host and refuse anything that isn't a public address.

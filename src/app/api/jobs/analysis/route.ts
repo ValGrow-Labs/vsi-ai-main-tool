@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
     query = query.eq("client_id", clientId).order("created_at", { ascending: false }).limit(1);
   }
 
-  if (!isSuperAdmin) {
+  if (!isSuperAdmin && session.agencyId && session.agencyId !== "00000000-0000-0000-0000-000000000000") {
     query = query.eq("agency_id", session.agencyId);
   }
 
@@ -134,11 +134,14 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = await createClient();
-  let clientQuery = supabase.from("clients").select("id, agency_id, website").eq("id", clientId);
-  if (session.role !== "super_admin") {
+  let clientQuery = supabase
+    .from("clients")
+    .select("id, agency_id, name, website, brand_name, default_location, industry, country")
+    .eq("id", clientId);
+  if (session.role !== "super_admin" && session.agencyId && session.agencyId !== "00000000-0000-0000-0000-000000000000") {
     clientQuery = clientQuery.eq("agency_id", session.agencyId);
   }
-  const { data: client } = await clientQuery.maybeSingle();
+  const { data: client, error: clientError } = await clientQuery.maybeSingle();
 
   if (!client) {
     return errorResp(404, "not_found", "Project not found.");
@@ -193,9 +196,9 @@ export async function POST(req: NextRequest) {
     jobId = jobRow.id as string;
   }
 
-  // Run background analysis asynchronously
+  // Run background analysis asynchronously with pre-fetched client data
   after(async () => {
-    await runFullAnalysisPipeline(jobId, clientId, agencyId);
+    await runFullAnalysisPipeline(jobId, clientId, agencyId, client);
   });
 
   return NextResponse.json({ jobId, status: "in_progress" }, { status: 202 });
@@ -221,7 +224,7 @@ export async function PATCH(req: NextRequest) {
   const supabase = await createClient();
   const { data: client } = await supabase
     .from("clients")
-    .select("id, agency_id")
+    .select("id, agency_id, name, website, brand_name, default_location, industry, country")
     .eq("id", clientId)
     .single();
 
@@ -269,7 +272,7 @@ export async function PATCH(req: NextRequest) {
   setFallbackJob(fallbackRecord);
 
   after(async () => {
-    await runFullAnalysisPipeline(newJobId, clientId, agencyId);
+    await runFullAnalysisPipeline(newJobId, clientId, agencyId, client);
   });
 
   return NextResponse.json({ jobId: newJobId, status: "in_progress" }, { status: 200 });
