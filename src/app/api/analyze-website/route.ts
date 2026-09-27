@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { normaliseDomain } from "@/lib/url-input";
 import { scrapeUrl } from "@/lib/firecrawl";
 import { callOpenRouter } from "@/lib/llm";
-import { LOCATIONS, type Location } from "@/types/search";
+import { type Location } from "@/types/search";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -56,50 +56,175 @@ function detectDomainLocation(domain: string): { location: string; locationCode:
   return { location: "United States", locationCode: "us" };
 }
 
-/** Fallback extraction using domain and HTML heuristics */
-function generateFallbackData(domain: string, title?: string, description?: string, h1s?: string[]): ExtractedWebsiteData {
+/** Dynamic content-aware fallback when LLM is unreachable */
+function generateDynamicFallback(
+  domain: string,
+  title?: string,
+  description?: string,
+  markdown?: string
+): ExtractedWebsiteData {
   const brand = extractBrandFromDomain(domain);
   const cleanTitle = title?.trim() || `${brand} Official Website`;
-  const cleanDesc = description?.trim() || `${brand} provides products and services online.`;
+  const cleanDesc = description?.trim() || `${brand} provides solutions and services online.`;
   const locInfo = detectDomainLocation(domain);
+
+  const fullText = `${cleanTitle} ${cleanDesc} ${(markdown || "").slice(0, 1000)}`.toLowerCase();
+
+  // Industry detection based on actual page content
+  let businessType = "Digital Services & Solutions";
+  let targetCustomers = ["Individual consumers", "Enterprises and businesses", "Digital users"];
+  let suggestedTopics = [`${brand} Services`, "Digital Solutions", "Customer Platform", "Technology & Innovation"];
+  let competitiveAdvantage = `${brand} delivers specialized, customer-centric services with high reliability and performance.`;
+  let suggestedCompetitors = [
+    { domain: `leading-${domain}`, name: `Market Leader 1`, market: locInfo.location, selected: true },
+    { domain: `top-${domain}`, name: `Top Competitor 2`, market: locInfo.location, selected: true },
+  ];
+
+  if (/\b(stream|streaming|movie|movies|film|films|tv show|tv shows|series|watch|video|entertainment)\b/i.test(fullText)) {
+    businessType = "Video Streaming & Entertainment";
+    targetCustomers = ["Movie & TV enthusiasts", "Streaming subscribers", "Families & households", "Mobile & smart TV viewers"];
+    suggestedTopics = ["Streaming TV Shows", "Movies & Feature Films", "Original Content & Series", "Multi-Device Streaming", "Entertainment Recommendations"];
+    competitiveAdvantage = `${brand} offers a rich entertainment catalog with seamless on-demand streaming across smart TVs, mobile, and web.`;
+    suggestedCompetitors = [
+      { domain: "hulu.com", name: "Hulu", market: locInfo.location, selected: true },
+      { domain: "disneyplus.com", name: "Disney+", market: locInfo.location, selected: true },
+      { domain: "primevideo.com", name: "Amazon Prime Video", market: locInfo.location, selected: true },
+    ];
+  } else if (/\b(software|saas|cloud|api|platform|developer|analytics|automation|workflow|ai|database)\b/i.test(fullText)) {
+    businessType = "Software & Cloud Platform (SaaS)";
+    targetCustomers = ["Enterprises and corporations", "Developers and engineering teams", "IT decision makers", "Growth startups"];
+    suggestedTopics = ["Cloud Architecture", "Platform Integration", "Enterprise Security", "Data & Analytics", "Workflow Automation"];
+    competitiveAdvantage = `${brand} empowers teams with scalable, automated software infrastructure and modern cloud reliability.`;
+    suggestedCompetitors = [
+      { domain: "microsoft.com", name: "Microsoft", market: locInfo.location, selected: true },
+      { domain: "google.com", name: "Google Cloud", market: locInfo.location, selected: true },
+      { domain: "amazon.com", name: "AWS", market: locInfo.location, selected: true },
+    ];
+  } else if (/\b(shop|store|cart|buy|price|products|apparel|footwear|fashion|clothing|ecommerce|retail)\b/i.test(fullText)) {
+    businessType = "E-Commerce & Retail";
+    targetCustomers = ["Online shoppers", "Fashion and lifestyle consumers", "Value-conscious buyers"];
+    suggestedTopics = ["Online Catalog", "Trending Products", "Seasonal Collections", "Customer Support", "Exclusive Offers"];
+    competitiveAdvantage = `${brand} provides curated quality products with competitive pricing, easy returns, and fast fulfillment.`;
+    suggestedCompetitors = [
+      { domain: "amazon.com", name: "Amazon", market: locInfo.location, selected: true },
+      { domain: "walmart.com", name: "Walmart", market: locInfo.location, selected: true },
+    ];
+  } else if (/\b(bank|banking|invest|investment|finance|financial|loan|credit|wealth|crypto|insurance)\b/i.test(fullText)) {
+    businessType = "Financial Services & Fintech";
+    targetCustomers = ["Individual investors", "Retail banking clients", "Business owners and founders"];
+    suggestedTopics = ["Financial Planning", "Digital Banking", "Wealth & Investment", "Secure Transactions", "Advisory Services"];
+    competitiveAdvantage = `${brand} provides secure, transparent financial solutions with dedicated advisory support.`;
+  } else if (/\b(health|healthcare|medical|clinic|doctor|patient|hospital|medicine|wellness|therapy)\b/i.test(fullText)) {
+    businessType = "Healthcare & Medical Services";
+    targetCustomers = ["Patients & individuals", "Healthcare professionals", "Families seeking medical care"];
+    suggestedTopics = ["Clinical Care", "Patient Consultations", "Specialized Treatments", "Preventative Health", "Medical Expertise"];
+    competitiveAdvantage = `${brand} offers certified medical care and patient-first healthcare guidance.`;
+  } else if (/\b(travel|hotel|hotels|resort|vacation|tour|flights|booking|destinations|trip)\b/i.test(fullText)) {
+    businessType = "Travel & Hospitality";
+    targetCustomers = ["Vacationers & tourists", "Business travelers", "Adventure & leisure seekers"];
+    suggestedTopics = ["Travel Booking", "Destinations & Guides", "Hotel Accommodations", "Travel Packages", "Customer Reviews"];
+    competitiveAdvantage = `${brand} provides seamless travel bookings and verified accommodations worldwide.`;
+  }
 
   return {
     brandName: brand,
-    domain: domain,
-    businessType: "E-commerce & Online Services",
+    domain,
+    businessType,
     websiteTitle: cleanTitle,
     metaDescription: cleanDesc,
     language: "English",
     location: locInfo.location,
     locationCode: locInfo.locationCode,
-    suggestedTopics: [
-      `${brand} Products`,
-      "Online Shopping",
-      "Customer Services",
-      "Deals & Offers",
-      "Trending Collections",
-    ],
+    suggestedTopics,
     suggestedKeywords: [
-      { keyword: `best ${brand.toLowerCase()} products`, category: "primary", categoryLabel: "Primary Search", selected: true },
-      { keyword: `buy ${brand.toLowerCase()} online`, category: "long_tail", categoryLabel: "Transactional", selected: true },
-      { keyword: `${brand.toLowerCase()} review`, category: "branded", categoryLabel: "Branded Search", selected: true },
-      { keyword: `top deals on ${brand.toLowerCase()}`, category: "primary", categoryLabel: "Primary Search", selected: true },
-      { keyword: `who is the leading ${brand.toLowerCase()} provider`, category: "ai_search", categoryLabel: "AI Overview", selected: true },
+      { keyword: `best ${brand.toLowerCase()} services`, category: "primary", categoryLabel: "Primary Search", selected: true },
+      { keyword: `${brand.toLowerCase()} official website`, category: "branded", categoryLabel: "Branded Search", selected: true },
+      { keyword: `top alternatives to ${brand.toLowerCase()}`, category: "long_tail", categoryLabel: "Transactional", selected: true },
+      { keyword: `${brand.toLowerCase()} reviews and features`, category: "primary", categoryLabel: "Primary Search", selected: true },
+      { keyword: `what is ${brand.toLowerCase()} and how it works`, category: "ai_search", categoryLabel: "AI Overview", selected: true },
     ],
     sitemapUrl: `https://${domain}/sitemap.xml`,
-    competitiveAdvantage: `${brand} offers high quality products with fast customer service and reliable shipping.`,
+    competitiveAdvantage,
     aboutBusiness: cleanDesc,
-    targetCustomers: ["Online shoppers", "Individual consumers", "Small businesses"],
-    suggestedCompetitors: [
-      { domain: `competitor-${domain}`, name: `Top Competitor 1`, market: locInfo.location, selected: true },
-      { domain: `leading-market-${domain}`, name: `Market Leader 2`, market: locInfo.location, selected: true },
-    ],
+    targetCustomers,
+    suggestedCompetitors,
     geoTopics: [
-      `What are the best products from ${brand}?`,
-      `How does ${brand} compare to top competitors?`,
-      `Where is ${brand} headquartered and available?`,
+      `What makes ${brand} stand out in the ${businessType} market?`,
+      `How does ${brand} compare to other industry providers?`,
+      `What are customer reviews and feedback for ${brand}?`,
     ],
   };
+}
+
+async function extractWithOpenRouter(prompt: string, apiKey: string): Promise<string | null> {
+  const models = ["openrouter/auto", "meta-llama/llama-3.3-70b-instruct"];
+  for (const model of models) {
+    try {
+      const res = await callOpenRouter(
+        model,
+        "You are an expert AI business and SEO analyst. Respond ONLY with valid JSON.",
+        prompt,
+        apiKey
+      );
+      if (res.content) return res.content;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+async function extractWithGemini(prompt: string, apiKey: string): Promise<string | null> {
+  const models = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-2.5-flash"];
+  for (const model of models) {
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { responseMimeType: "application/json", temperature: 0.1 },
+          }),
+          signal: AbortSignal.timeout(15000),
+        }
+      );
+      if (!res.ok) continue;
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) return text;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+async function extractWithOpenAI(prompt: string, apiKey: string): Promise<string | null> {
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: "You are an expert AI business and SEO analyst. Respond ONLY with valid JSON." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.1,
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -116,7 +241,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Please enter a valid website URL." }, { status: 400 });
     }
 
-    // Add protocol if missing for normalisation
     const urlWithProto = rawUrl.startsWith("http://") || rawUrl.startsWith("https://") ? rawUrl : `https://${rawUrl}`;
     const parsed = normaliseDomain(urlWithProto);
 
@@ -146,12 +270,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Use LLM to extract structured website business analysis if API Key is available
-    const apiKey = process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY;
-
-    if (apiKey && process.env.OPENROUTER_API_KEY) {
-      const systemPrompt = "You are an expert AI business and SEO analyst. Respond ONLY with valid JSON.";
-      const userPrompt = `Analyze this website content and extract comprehensive business intelligence.
+    const userPrompt = `Analyze this website content and extract comprehensive, authentic business intelligence.
+Do NOT invent unrelated e-commerce or retail topics if the business is entertainment, streaming, technology, health, or finance.
 
 Website Domain: ${parsed.domain}
 Website Title: ${title ?? "N/A"}
@@ -159,82 +279,110 @@ Meta Description: ${description ?? "N/A"}
 
 Scraped Content Preview (Markdown):
 """
-${markdown.slice(0, 3500)}
+${(markdown || "").slice(0, 4000)}
 """
 
 Return JSON in this EXACT structure:
 {
-  "brandName": "Brand Name",
-  "businessType": "Industry / Category",
+  "brandName": "Actual Brand Name",
+  "businessType": "Accurate Specific Industry / Category (e.g. Video Streaming / Entertainment or Cloud SaaS Platform)",
   "language": "Primary Language e.g. English",
-  "location": "Primary Country e.g. India or United States or United Arab Emirates",
+  "location": "Primary Country e.g. United States or India or United Arab Emirates",
   "locationCode": "ae" | "us" | "uk" | "in" | "lk" | "sg",
-  "suggestedTopics": ["Topic 1", "Topic 2", "Topic 3", "Topic 4", "Topic 5"],
+  "suggestedTopics": ["Accurate Topic 1", "Accurate Topic 2", "Accurate Topic 3", "Accurate Topic 4", "Accurate Topic 5"],
   "suggestedKeywords": [
     { "keyword": "search query 1", "category": "primary", "categoryLabel": "Primary Keyword", "selected": true },
     { "keyword": "search query 2", "category": "geo", "categoryLabel": "Location Search", "selected": true },
-    { "keyword": "search query 3", "category": "ai_search", "categoryLabel": "AI Search Prompt", "selected": true }
+    { "keyword": "search query 3", "category": "ai_search", "categoryLabel": "AI Search Prompt", "selected": true },
+    { "keyword": "search query 4", "category": "branded", "categoryLabel": "Branded Search", "selected": true },
+    { "keyword": "search query 5", "category": "long_tail", "categoryLabel": "Transactional", "selected": true }
   ],
   "sitemapUrl": "https://${parsed.domain}/sitemap.xml",
-  "competitiveAdvantage": "One punchy sentence describing key edge or value proposition.",
-  "aboutBusiness": "2-3 concise sentences summarizing what the business does and sells.",
-  "targetCustomers": ["Group 1", "Group 2", "Group 3"],
+  "competitiveAdvantage": "Authentic value proposition describing what this specific company actually offers.",
+  "aboutBusiness": "2-3 concise sentences summarizing what this business actually does.",
+  "targetCustomers": ["Real Target Audience 1", "Real Target Audience 2", "Real Target Audience 3"],
   "suggestedCompetitors": [
-    { "domain": "competitor1.com", "name": "Competitor One", "market": "Country / Global", "selected": true },
-    { "domain": "competitor2.com", "name": "Competitor Two", "market": "Country / Global", "selected": true }
+    { "domain": "actual-competitor1.com", "name": "Actual Competitor One", "market": "Country / Global", "selected": true },
+    { "domain": "actual-competitor2.com", "name": "Actual Competitor Two", "market": "Country / Global", "selected": true },
+    { "domain": "actual-competitor3.com", "name": "Actual Competitor Three", "market": "Country / Global", "selected": true }
   ],
   "geoTopics": ["Topic / Query 1 for AI search", "Topic / Query 2 for AI search"]
 }`;
 
+    let aiContent: string | null = null;
+
+    // 1. Try OpenRouter
+    if (process.env.OPENROUTER_API_KEY) {
+      aiContent = await extractWithOpenRouter(userPrompt, process.env.OPENROUTER_API_KEY);
+    }
+
+    // 2. Try Gemini fallback
+    if (!aiContent && (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)) {
+      const gKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)!;
+      aiContent = await extractWithGemini(userPrompt, gKey);
+    }
+
+    // 3. Try OpenAI fallback
+    if (!aiContent && process.env.OPENAI_API_KEY) {
+      aiContent = await extractWithOpenAI(userPrompt, process.env.OPENAI_API_KEY);
+    }
+
+    if (aiContent) {
       try {
-        const { content } = await callOpenRouter(
-          "meta-llama/llama-3.3-70b-instruct:free",
-          systemPrompt,
-          userPrompt,
-          process.env.OPENROUTER_API_KEY
-        );
+        const match = aiContent.match(/\{[\s\S]*\}/);
+        if (match) {
+          const parsedData = JSON.parse(match[0]);
+          const locInfo = detectDomainLocation(parsed.domain);
 
-        if (content) {
-          const match = content.match(/\{[\s\S]*\}/);
-          if (match) {
-            const parsedData = JSON.parse(match[0]);
-            const finalData: ExtractedWebsiteData = {
-              brandName: parsedData.brandName || extractBrandFromDomain(parsed.domain),
-              domain: parsed.domain,
-              businessType: parsedData.businessType || "Online Retail / Services",
-              websiteTitle: title || parsedData.brandName || parsed.domain,
-              metaDescription: description || parsedData.aboutBusiness || "",
-              language: parsedData.language || "English",
-              location: parsedData.location || "United States",
-              locationCode: (["ae", "us", "uk", "in", "lk", "sg"].includes(parsedData.locationCode) ? parsedData.locationCode : "us") as Location,
-              suggestedTopics: Array.isArray(parsedData.suggestedTopics) && parsedData.suggestedTopics.length > 0
+          const finalData: ExtractedWebsiteData = {
+            brandName: parsedData.brandName || extractBrandFromDomain(parsed.domain),
+            domain: parsed.domain,
+            businessType: parsedData.businessType || "Digital Services & Solutions",
+            websiteTitle: title || parsedData.brandName || parsed.domain,
+            metaDescription: description || parsedData.aboutBusiness || "",
+            language: parsedData.language || "English",
+            location: parsedData.location || locInfo.location,
+            locationCode: (["ae", "us", "uk", "in", "lk", "sg"].includes(parsedData.locationCode)
+              ? parsedData.locationCode
+              : locInfo.locationCode) as Location,
+            suggestedTopics:
+              Array.isArray(parsedData.suggestedTopics) && parsedData.suggestedTopics.length > 0
                 ? parsedData.suggestedTopics
-                : [`${parsedData.brandName || parsed.domain} Services`, "Online Solutions"],
-              suggestedKeywords: Array.isArray(parsedData.suggestedKeywords) ? parsedData.suggestedKeywords : [],
-              sitemapUrl: parsedData.sitemapUrl || `https://${parsed.domain}/sitemap.xml`,
-              competitiveAdvantage: parsedData.competitiveAdvantage || "Leading provider with dedicated customer focus.",
-              aboutBusiness: parsedData.aboutBusiness || description || "Comprehensive products and service provider.",
-              targetCustomers: Array.isArray(parsedData.targetCustomers) ? parsedData.targetCustomers : ["Consumers", "Businesses"],
-              suggestedCompetitors: Array.isArray(parsedData.suggestedCompetitors) ? parsedData.suggestedCompetitors.map((c: { domain?: string; name?: string; market?: string }) => ({
-                domain: c.domain?.toLowerCase().replace(/^https?:\/\//i, '').replace(/\/.*$/, '') || `competitor-${parsed.domain}`,
-                name: c.name || c.domain || "Market Competitor",
-                market: c.market || parsedData.location || "Global",
-                selected: true,
-              })) : [],
-              geoTopics: Array.isArray(parsedData.geoTopics) ? parsedData.geoTopics : [],
-            };
+                : [`${parsedData.brandName || parsed.domain} Services`, "Digital Solutions"],
+            suggestedKeywords: Array.isArray(parsedData.suggestedKeywords) ? parsedData.suggestedKeywords : [],
+            sitemapUrl: parsedData.sitemapUrl || `https://${parsed.domain}/sitemap.xml`,
+            competitiveAdvantage:
+              parsedData.competitiveAdvantage ||
+              `${parsedData.brandName || parsed.domain} provides leading solutions with high reliability and performance.`,
+            aboutBusiness:
+              parsedData.aboutBusiness || description || `${parsedData.brandName || parsed.domain} is a leading industry provider.`,
+            targetCustomers:
+              Array.isArray(parsedData.targetCustomers) && parsedData.targetCustomers.length > 0
+                ? parsedData.targetCustomers
+                : ["Consumers", "Businesses", "Subscribers"],
+            suggestedCompetitors: Array.isArray(parsedData.suggestedCompetitors)
+              ? parsedData.suggestedCompetitors.map((c: { domain?: string; name?: string; market?: string }) => ({
+                  domain:
+                    c.domain?.toLowerCase().replace(/^https?:\/\//i, "").replace(/\/.*$/, "") ||
+                    `competitor-${parsed.domain}`,
+                  name: c.name || c.domain || "Industry Competitor",
+                  market: c.market || parsedData.location || "Global",
+                  selected: true,
+                }))
+              : [],
+            geoTopics: Array.isArray(parsedData.geoTopics) ? parsedData.geoTopics : [],
+          };
 
-            return NextResponse.json({ success: true, data: finalData });
-          }
+          return NextResponse.json({ success: true, data: finalData });
         }
-      } catch {
-        // Fall back to heuristic data below
+      } catch (err) {
+        console.warn("[analyze-website] failed to parse AI JSON, falling back to dynamic content analysis", err);
       }
     }
 
-    // Fallback heuristic extraction if LLM is offline or no API key
-    const fallback = generateFallbackData(parsed.domain, title ?? undefined, description ?? undefined);
-    return NextResponse.json({ success: true, data: fallback });
+    // Dynamic content-aware fallback using the actual scraped title, description, and keywords
+    const dynamicFallback = generateDynamicFallback(parsed.domain, title ?? undefined, description ?? undefined, markdown);
+    return NextResponse.json({ success: true, data: dynamicFallback });
   } catch (err) {
     console.error("[analyze-website] error:", err);
     return NextResponse.json(

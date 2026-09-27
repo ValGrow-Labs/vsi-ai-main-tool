@@ -20,7 +20,8 @@ const FALLBACK: AIOIntelligence = {
 
 // Model chain: Llama first (user preference), then fallbacks
 const MODEL_CHAIN = [
-  "meta-llama/llama-3.3-70b-instruct:free",
+  "meta-llama/llama-3.3-70b-instruct",
+  "openrouter/auto",
   "minimax/minimax-m2.5:free",
   "nvidia/nemotron-3-super-120b-a12b:free",
 ];

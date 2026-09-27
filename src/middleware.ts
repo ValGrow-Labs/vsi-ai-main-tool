@@ -13,6 +13,7 @@ const PUBLIC_PATHS = [
   "/api/qa",
   "/api/cron",
   "/api/auth",
+  "/api/analyze-website",
   "/auth/callback",
 ];
 

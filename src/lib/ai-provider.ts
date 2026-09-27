@@ -170,37 +170,30 @@ async function streamGemini(
     })),
   ];
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse&key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents,
-        generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
-      }),
-    }
-  );
+  const candidateModels = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-2.5-flash", "gemini-1.5-flash"];
 
-  if (!res.ok || !res.body) {
-    const resFallback = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?alt=sse&key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents,
-          generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
-        }),
+  for (const model of candidateModels) {
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents,
+            generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
+          }),
+        }
+      );
+      if (res.ok && res.body) {
+        return parseGeminiSSE(res.body, callbacks);
       }
-    );
-    if (!resFallback.ok || !resFallback.body) {
-      throw new Error(`Gemini HTTP ${res.status}`);
+    } catch {
+      continue;
     }
-    return parseGeminiSSE(resFallback.body, callbacks);
   }
 
-  return parseGeminiSSE(res.body, callbacks);
+  throw new Error("Gemini stream failed across all candidate models");
 }
 
 async function parseGeminiSSE(stream: ReadableStream<Uint8Array>, callbacks: StreamCallbacks) {

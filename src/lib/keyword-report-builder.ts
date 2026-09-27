@@ -129,7 +129,7 @@ const MODEL_CHAIN = [
   "openrouter/auto",
   "z-ai/glm-4.5-air:free",
   "openai/gpt-oss-120b:free",
-  "meta-llama/llama-3.3-70b-instruct:free",
+  "meta-llama/llama-3.3-70b-instruct",
 ];
 const PER_MODEL_TIMEOUT_MS = 45000;
 
