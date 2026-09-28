@@ -971,7 +971,7 @@ function downloadAiReport() {
 
     const opt = {
         margin: 0,
-        filename: 'SalesboxAI_AI_Visibility_Report.pdf',
+        filename: 'ExampleBrand_AI_Visibility_Report.pdf',
         image: { type: 'jpeg', quality: 0.98 },
         html2canvas: { scale: 2, useCORS: true },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }

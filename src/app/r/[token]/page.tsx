@@ -81,7 +81,8 @@ export default async function PublicReportPage({ params }: { params: Promise<{ t
  if (row.type === "keyword_summary" || row.type === "keyword_detailed" || row.type === "keyword_tasks") {
  const kwContent = row.content as KeywordReportContent | null;
  if (!kwContent || kwContent.schema !== "vsi-keyword-report-v1") {
- console.error("[/r/:token] malformed keyword report content", token);
+ // Never log the token: it is the credential for a public link.
+ console.error("[/r/:token] malformed keyword report content", { reportId: row.id });
  notFound();
  }
  return <KeywordReportView content={kwContent} />;
@@ -89,7 +90,7 @@ export default async function PublicReportPage({ params }: { params: Promise<{ t
 
  const raw = row.content as Partial<ReportContent> | null;
  if (!raw || !raw.branding || !raw.client || !Array.isArray(raw.hero)) {
- console.error("[/r/:token] malformed content for token", token, raw);
+ console.error("[/r/:token] malformed report content", { reportId: row.id });
  notFound();
  }
 

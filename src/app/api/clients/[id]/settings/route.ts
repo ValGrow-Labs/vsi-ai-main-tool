@@ -13,7 +13,9 @@ const ALLOWED_KEYS = new Set([
  "location_override",
 ]);
 
-const VALID_FREQUENCIES = new Set(["manual", "daily", "every_3_days", "weekly"]);
+// Scheduled checks are not available yet (nothing runs them), so a project can only be set to
+// "manual". A daily/weekly schedule is refused rather than stored as a promise that never runs.
+const SCHEDULES_NOT_AVAILABLE = "Scheduled checks aren't available yet. Checks run when you start them.";
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
  const session = await requireAgencyApi();
@@ -29,9 +31,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
  if (!ALLOWED_KEYS.has(key)) continue;
 
  if (key === "check_frequency") {
- if (typeof value === "string" && VALID_FREQUENCIES.has(value)) {
+ if (value !== "manual") return NextResponse.json({ error: SCHEDULES_NOT_AVAILABLE }, { status: 400 });
  update[key] = value;
- }
  continue;
  }
  if (key === "brief_model_override" || key === "location_override") {

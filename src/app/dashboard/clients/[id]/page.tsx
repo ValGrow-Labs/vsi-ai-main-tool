@@ -147,7 +147,6 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
             <p className="text-caption text-ink-3 mt-2 flex items-center gap-2">
               <Activity size={12} className="text-positive" />
               <span>Last Scan: <strong className="text-ink">{new Date((client as unknown as { last_auto_run_at: string }).last_auto_run_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</strong></span>
-              <span>· Frequency: <strong className="text-ink capitalize">{((client as unknown as { check_frequency?: string }).check_frequency ?? "manual").replace(/_/g, " ")}</strong></span>
             </p>
           )}
         </div>

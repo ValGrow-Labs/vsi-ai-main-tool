@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   calculateVisibilityMetrics,
   generateDataDrivenRecommendations,
@@ -8,16 +8,39 @@ import {
   type AIResponseResult,
   type TechnicalSeoIssue,
 } from "./index";
+import { SerpApiSearchProvider, SerperSearchProvider, UnconfiguredSearchProvider } from "./search-providers";
+import { OpenAIProvider, OpenRouterAIProvider, UnconfiguredAIProvider } from "./ai-providers";
+
+const PROVIDER_KEYS = ["SERPER_API_KEY", "SERPAPI_KEY", "SERPAPI_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY"];
+/** Tests decide the keys; nothing from the shell environment leaks in. */
+function withKeys(keys: Record<string, string> = {}) {
+  for (const k of PROVIDER_KEYS) vi.stubEnv(k, keys[k] ?? "");
+}
 
 describe("Provider Architecture & Metrics Suite", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it("should return UnconfiguredSearchProvider when SERP keys are missing", () => {
-    const provider = getSearchProvider();
-    expect(provider.name).toBeDefined();
+    withKeys();
+    expect(getSearchProvider()).toBeInstanceOf(UnconfiguredSearchProvider);
   });
 
   it("should return UnconfiguredAIProvider when AI keys are missing", () => {
-    const provider = getAIProvider();
-    expect(provider.name).toBeDefined();
+    withKeys();
+    expect(getAIProvider()).toBeInstanceOf(UnconfiguredAIProvider);
+  });
+
+  it("picks the configured provider when a key is set (no call is made)", () => {
+    withKeys({ SERPAPI_KEY: "test-serpapi" });
+    expect(getSearchProvider()).toBeInstanceOf(SerpApiSearchProvider);
+    withKeys({ SERPER_API_KEY: "test-serper" });
+    const serper = getSearchProvider();
+    expect(serper).toBeInstanceOf(SerperSearchProvider);
+    expect(serper).not.toBeInstanceOf(SerpApiSearchProvider); // SerpApi extends Serper
+    withKeys({ OPENAI_API_KEY: "test-openai" });
+    expect(getAIProvider()).toBeInstanceOf(OpenAIProvider);
+    withKeys({ OPENROUTER_API_KEY: "test-openrouter" });
+    expect(getAIProvider()).toBeInstanceOf(OpenRouterAIProvider);
   });
 
   it("should accurately compute search and AI visibility metrics mathematically", () => {

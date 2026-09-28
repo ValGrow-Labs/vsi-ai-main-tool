@@ -43,6 +43,13 @@ README.md
 .eslintcache
 .next-env.d.ts
 
-# Docs / migration files don't need to be in the runtime image
-# (they're for the developer, not the app)
-supabase/migration_*.sql
+# Not part of the app: never send these to the Docker build.
+# examples/ holds a legacy app with personal data; the others are docs, generated
+# indexes and separate projects. (supabase/ stays: tests import supabase/tests/, and
+# next build type-checks them.)
+examples/
+apps/
+archive/
+graphify-out/
+brag-output/
+docs/

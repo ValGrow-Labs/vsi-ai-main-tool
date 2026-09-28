@@ -161,11 +161,11 @@ function ensureAdminAccount() {
     if (empty($users)) {
         $users = [[
             'id' => 'u001',
-            'email' => 'admin@salesboxai.com',
+            'email' => 'admin@example.com',
             'password_hash' => password_hash('admin123', PASSWORD_DEFAULT),
             'name' => 'Admin',
             'role' => 'admin',
-            'company' => 'SalesboxAI',
+            'company' => 'ExampleBrand',
             'created_at' => date('Y-m-d H:i:s'),
             'status' => 'active'
         ]];

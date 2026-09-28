@@ -13,17 +13,9 @@ interface Initial {
  rank_tracking_enabled: Tri;
  chatgpt_enabled: Tri;
  llm_mentions_enabled: Tri;
- check_frequency: string;
  brief_model_override: string;
  location_override: string;
 }
-
-const FREQUENCIES: { value: string; label: string }[] = [
- { value: "manual", label: "Manual Only" },
- { value: "daily", label: "Daily automated scan" },
- { value: "every_3_days", label: "Every 3 Days" },
- { value: "weekly", label: "Weekly audit" },
-];
 
 function TriToggle({
  value,
@@ -93,7 +85,6 @@ export default function ClientSettingsForm({ clientId, initial }: { clientId: st
  rank_tracking_enabled: state.rank_tracking_enabled,
  chatgpt_enabled: state.chatgpt_enabled,
  llm_mentions_enabled: state.llm_mentions_enabled,
- check_frequency: state.check_frequency,
  brief_model_override: state.brief_model_override.trim() || null,
  location_override: state.location_override.trim() || null,
  }),
@@ -156,27 +147,9 @@ export default function ClientSettingsForm({ clientId, initial }: { clientId: st
  <span>Automation Schedule</span>
  </p>
  <div className="rounded-panel border border-line bg-surface p-6 shadow-overlay">
- <p className="text-body font-heading font-semibold text-ink mb-1">Check Frequency & Cron Schedule</p>
- <p className="text-caption text-ink-3 mb-4">Select how frequently our AI agents audit keywords and citations automatically for this client.</p>
- <div className="flex flex-wrap gap-2.5">
- {FREQUENCIES.map((f) => {
- const active = state.check_frequency === f.value;
- return (
- <button
- key={f.value}
- type="button"
- onClick={() => setState((s) => ({ ...s, check_frequency: f.value }))}
- className={`rounded-panel px-4 py-2 text-caption font-mono font-semibold transition-all ${
- active
- ? "bg-surface-2 text-ink scale-105"
- : "border border-line bg-surface/[0.03] text-ink-3 hover:text-ink hover:bg-surface/[0.08]"
- }`}
- >
- {f.label}
- </button>
- );
- })}
- </div>
+ {/* Scheduled checks are not available yet: nothing runs them, so no schedule can be chosen. */}
+ <p className="text-body font-heading font-semibold text-ink mb-1">Scheduled checks aren&apos;t available yet</p>
+ <p className="text-caption text-ink-3">Checks run only when you start them from the project. Automatic daily or weekly checks will appear here once they are supported.</p>
  </div>
  </div>
 

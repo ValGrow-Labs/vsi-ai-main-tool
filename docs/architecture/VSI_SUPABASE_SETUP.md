@@ -6,6 +6,12 @@ This guide gets VSI from its current state onto a real development or staging Su
 
 **No real Supabase project was connected when this was written.** `.env.local` still holds the placeholder URL. Anything marked *not run* has not been executed against a database. Results of what was and wasn't tested are in [VSI_SUPABASE_VALIDATION_RESULTS.md](../validation/VSI_SUPABASE_VALIDATION_RESULTS.md).
 
+> **Status update (2026-09-28).** Parts of this guide describe the code as it was on 2026-09-19. Since then:
+> - The database is the numbered chain `supabase/migrations/001_baseline.sql` … `045_analytics_event_allowlist.sql`, applied in order with `supabase db push` (section 10). It was applied cleanly to a fresh VSI staging project.
+> - 043, 044 and 045 are the security migrations (tenant isolation, disabled accounts, invites, shared reports, feedback/analytics, QA functions, analytics event types). The isolation gaps listed in section 8 were written before them; re-check any gap against the current policies before acting on it.
+> - Self-service sign-up exists, the single hard-coded account is gone, and password reset works: "Forgot password?" on the sign-in form emails a link to `/auth/reset-password` (section 6).
+> - Redirect URLs for every environment: `<origin>/auth/callback` **and** `<origin>/auth/reset-password`.
+
 ---
 
 ## 1. Supabase architecture
@@ -70,7 +76,7 @@ With a real URL, the local cookie session and the local Google button switch off
 1. A **separate** Supabase project named for staging.
 2. Apply the database (section 10), create the user, run the seed.
 3. In the hosting platform, set the variables from section 2 for the staging deployment only. Mark the two `NEXT_PUBLIC_` names as available at build time.
-4. Supabase → Authentication → URL Configuration: Site URL = the staging origin. Redirect URLs: `<origin>/auth/callback`.
+4. Supabase → Authentication → URL Configuration: Site URL = the staging origin. Redirect URLs: `<origin>/auth/callback` and `<origin>/auth/reset-password`.
 5. Leave `CRON_SECRET` empty and the three `GOOGLE_*` names empty.
 6. Run `supabase/tests/tenant_isolation_checks.sql` and `supabase/tests/037_platform_admin_checks.sql` in the SQL editor and record the result.
 
@@ -88,13 +94,13 @@ The same as staging, on its own Supabase project and its own keys, plus:
 
 How it works today:
 - **Email and password** through Supabase Auth (`LoginPage.tsx` → `signInWithPassword`). This is the only sign-in that works against a real project.
-- **One allowed account.** `src/lib/auth-config.ts` hard-codes a single email. The middleware, `getSession()`, the login form and both callbacks sign out anyone else. Invites, onboarding and the admin user pages exist, but no second person can hold a session until this changes.
+- **Accounts:** any confirmed account can sign in. Disabled accounts (or members of a disabled organization) are signed out and refused by the middleware, the API and the database. A new account without an organization is sent to `/onboarding`.
 - **Sign-out:** `logoutAndRedirect()` signs out of Supabase and clears the local markers.
 - **Session persistence:** Supabase cookies, refreshed by the middleware.
 - **Protected routes:** everything except `/`, `/login`, `/privacy`, `/r/*`, `/qa`, `/api/qa`, `/api/cron`, `/api/auth`, `/auth/callback`.
 - **Welcome toast:** a one-time `vsi_welcome` cookie set at sign-in and read once on the dashboard. Uncommitted; to be verified on the real project.
-- **Password reset: not usable.** `ForgotPasswordModal` exists but is not shown anywhere, and it sends people to `/auth/reset-password`, a page that does not exist.
-- **Sign-up: none.** There is no registration page. `/auth/login` and `/auth/register` only redirect.
+- **Password reset:** "Forgot password?" on the sign-in form opens `ForgotPasswordModal`, which asks Supabase to email a recovery link to `/auth/reset-password`. That page turns the link into Supabase's recovery session and sets the new password (`src/lib/password-reset.ts`). `<origin>/auth/reset-password` must be an allowed redirect URL.
+- **Sign-up:** self-service on `/login` ("Create account"); the confirmation email returns to `/auth/callback`. `/auth/login` and `/auth/register` only redirect.
 
 Supabase dashboard settings:
 - Providers → Email: enabled.
@@ -164,11 +170,11 @@ RLS is enabled on all 21 public tables.
 
 ## 10. Database migration process
 
-There is no migration tool. SQL files are applied by hand in the SQL editor, in this order:
+Apply `supabase/migrations/001_baseline.sql` … `045_analytics_event_allowlist.sql` in number order, with the Supabase CLI linked to the target project (`supabase db push`, after checking `supabase db push --dry-run`). Never point the CLI at a project you have not confirmed is the intended VSI environment. `supabase/schema.sql` is not part of this chain.
 
-1. `supabase/schema.sql`, **once, on an empty database only.** It starts with `drop table ... cascade` and destroys data if run again.
-2. `supabase/migrations/migration_002` … `migration_037`, in number order, **except 033**.
-3. `migration_038_fresh_install_repairs.sql`.
+Before applying 040 to a database that already has migration history, check whether it already has the original 040 (the version without the `analysis_jobs_one_running_per_client` index). The CLI skips a version it has already recorded, so a changed 040 is never re-applied there.
+
+*The notes below were written for the older, hand-applied files and are kept for history.*
 
 What you need to know first:
 - **Migration 033 fails.** Its `messages_user_access` policy uses `sender_id` and `receiver_id`, columns the `messages` table doesn't have. In the SQL editor the whole file rolls back. Nothing the application uses comes only from 033, so skip it. (`notifications.ai_engine`, which the app reads, comes from migration 030.)

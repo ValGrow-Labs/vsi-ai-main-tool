@@ -1,5 +1,12 @@
 # VSI QA Checklist
 
+> **Out of date (2026-09-28). Do not use as written.** This checklist predates the current app. In particular:
+> it names `https://searchintel.valgrowlabs.com` as the site under test (the production domain is not
+> confirmed); it expects scheduled checks to run from `/api/cron/run-due-clients` (they are not functional:
+> nothing schedules the route and it cannot see projects); sign-in and sign-up are now on `/login`
+> (`/auth/login` and `/auth/register` only redirect); and several `/admin/*` pages moved (see the
+> redirects in `next.config.ts`). Rewrite it against the current app before the next test round.
+
 Hand this to a tester. They tick each box with **PASS / FAIL / N/A** and note any defects. Test on the live site at `https://searchintel.valgrowlabs.com` unless otherwise stated.
 
 **Tester:** _____________________  **Date:** _____________________  **Browser/OS:** _____________________

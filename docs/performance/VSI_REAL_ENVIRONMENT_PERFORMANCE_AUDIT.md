@@ -1,5 +1,12 @@
 # VSI real-environment performance audit
 
+> **Correction (2026-09-28): the database measured here was not VSI's.** The Supabase project used
+> for this audit (named "Blynk" in the Supabase account, see section 2) was later confirmed to be a
+> separate, unrelated project. Every database figure below (region, rows, latency) describes that
+> project, not VSI. Do not use them for VSI capacity or latency decisions, and do not connect VSI to
+> that project. Code-level findings marked [V] were read in VSI's code and are unaffected. The
+> runtime has since moved to Node 22 for Docker builds.
+
 Date: 2026-09-20. Branch `feat/redesign-geo`. Application code was **not** modified. Nothing was committed.
 
 How to read the evidence labels used below:

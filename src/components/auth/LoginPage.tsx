@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { FullScreenSignup, type AuthMode } from '@/components/ui/full-screen-signup';
 import { Toast } from '../common/Toast';
+import { ForgotPasswordModal } from './ForgotPasswordModal';
 import type { ToastMessage, UserProfile } from '@/types/login';
 import { setClientSession, isAuthenticatedClient, markJustSignedIn, clearClientSession } from '@/lib/auth-client';
 import { createClient } from '@/lib/supabase/client';
@@ -20,6 +21,7 @@ export const LoginPage: React.FC<{ initialMode?: AuthMode }> = ({ initialMode = 
   // Set when an account was created but must be confirmed from the email first.
   const [confirmationEmail, setConfirmationEmail] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
+  const [forgotOpen, setForgotOpen] = useState(false);
   const [authError, setAuthError] = useState<string>('');
 
   useEffect(() => {
@@ -182,8 +184,15 @@ export const LoginPage: React.FC<{ initialMode?: AuthMode }> = ({ initialMode = 
           isLoading={isLoading}
           authError={authError}
           clearAuthError={() => setAuthError('')}
+          onForgotPassword={() => setForgotOpen(true)}
         />
       </div>
+
+      <ForgotPasswordModal
+        isOpen={forgotOpen}
+        onClose={() => setForgotOpen(false)}
+        onSuccessToast={(text) => setToast({ id: String(Date.now()), type: 'success', text })}
+      />
     </div>
   );
 };

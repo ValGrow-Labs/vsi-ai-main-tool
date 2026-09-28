@@ -55,3 +55,6 @@ next-env.d.ts
 # local scratch projects
 VSI-login-page/
 valgrow-ai-suite/
+
+# graphify: generated local knowledge-graph index (can name files and symbols; never commit)
+/graphify-out/

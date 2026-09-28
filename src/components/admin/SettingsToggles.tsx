@@ -46,18 +46,6 @@ const TOGGLES: ToggleConfig[] = [
 
 const SELECTS: SelectConfig[] = [
   {
-    key: "default_check_frequency",
-    title: "Default cron frequency for new clients",
-    description:
-      "When a new client is created, this is the schedule cron uses. Each client can override this individually from their Settings tab.",
-    options: [
-      { value: "manual", label: "Manual only" },
-      { value: "daily", label: "Daily" },
-      { value: "every_3_days", label: "Every 3 days" },
-      { value: "weekly", label: "Weekly (recommended)" },
-    ],
-  },
-  {
     key: "openai_chatgpt_model",
     title: "OpenAI model for ChatGPT visibility",
     description:

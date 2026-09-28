@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // A tiny in-memory stand-in for the Supabase query builder: it applies the
 // filters the loaders use and returns only the selected columns.
@@ -74,6 +74,12 @@ const PROJECT = {
   agencyId: "a1",
   agencyName: null,
 };
+
+// Load the modules once, outside the timed tests: a cold import of this module graph can take
+// several seconds when the full suite runs in parallel, which used to trip the 5s per-test timeout.
+beforeAll(async () => {
+  await Promise.all([import("./geo-load"), import("./search-load"), import("./visibility-load"), import("./project-data-load")]);
+}, 60_000);
 
 const day = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
 

@@ -1,48 +1,27 @@
 # VSI — Deployment Guide (Coolify)
 
-> **Out of date for the database (2026-09-19).** Do not follow section 2. It lists only four
-> migrations, and it tells you to create `USING (true)` development policies on `clients`,
-> `tracked_keywords` and `search_results`, which removes the separation between organizations.
-> Use [docs/architecture/VSI_SUPABASE_SETUP.md](../architecture/VSI_SUPABASE_SETUP.md) for the
-> database, environment variables and authentication. The Coolify steps below still apply.
+> **Updated 2026-09-28.** The database, environment-variable and authentication steps live in
+> [docs/architecture/VSI_SUPABASE_SETUP.md](../architecture/VSI_SUPABASE_SETUP.md); sections 2 and 4
+> below only point there. The Coolify steps still apply. The deployment target (Coolify with this
+> Dockerfile, or Vercel) has not been decided, and nothing here means VSI is deployed.
 
 ## Prerequisites
 - Coolify instance with Docker support
 - Private Git repository (GitHub / GitLab / Gitea)
 - Supabase project with schema applied
-- API keys for: Serper (optional), SerpAPI, OpenRouter, Firecrawl
+- Provider keys for the providers you choose (see `.env.example`); none are needed to build or start the app
 
-## 1. Push code to your private repo
+## 1. Source
 
-```bash
-# In the project root
-git init
-git add .
-git commit -m "Initial commit"
-git remote add origin git@github.com:YOUR-USERNAME/YOUR-REPO.git
-git branch -M main
-git push -u origin main
-```
+The code is already in the team's private repository. Deploy from a reviewed branch; `.env.local` is
+git-ignored and must never be committed.
 
-> `.env.local` is in `.gitignore` — your keys will NOT be pushed. Verify with `git status` before committing.
+## 2. Database
 
-## 2. Apply database schema in Supabase
-
-In the Supabase SQL Editor, run in order:
-1. `supabase/schema.sql` (full schema)
-2. `supabase/migration_002_frequency.sql`
-3. `supabase/migration_003_rich_results.sql`
-4. `supabase/migration_004_fix_gap_labels.sql`
-
-Then run the dev-mode setup:
-```sql
-insert into public.agencies (id, name, slug)
-values ('aaaaaaaa-0000-0000-0000-000000000001', 'ValGrow Digital', 'valgrow-digital');
-
-create policy "dev_clients_all"   on public.clients          for all using (true) with check (true);
-create policy "dev_keywords_all"  on public.tracked_keywords for all using (true) with check (true);
-create policy "dev_results_all"   on public.search_results   for all using (true) with check (true);
-```
+Apply `supabase/migrations/001_baseline.sql` … `045_analytics_event_allowlist.sql` to the confirmed
+VSI project for this environment, as described in section 10 of
+[VSI_SUPABASE_SETUP.md](../architecture/VSI_SUPABASE_SETUP.md). Never create `USING (true)` policies:
+they remove the separation between organizations.
 
 ## 3. Create the app in Coolify
 
@@ -54,19 +33,12 @@ create policy "dev_results_all"   on public.search_results   for all using (true
 
 ## 4. Set environment variables in Coolify panel
 
-Required (set under the app's Environment Variables tab):
+`.env.example` lists every variable with its purpose. For a production deployment:
 
-```
-NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGc...
-SERPER_API_KEY=your_serper_key
-SEARCHAPI_KEY=your_searchapi_key
-OPENROUTER_API_KEY=sk-or-v1-...
-OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct:free
-FIRECRAWL_API_KEY=fc-...
-```
-
-> Mark `NEXT_PUBLIC_*` as build-time. The others are runtime-only.
+- **Build time:** `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` of this environment's own VSI project (never another environment's).
+- **Runtime:** `ANALYTICS_SALT` (a long random string), and the keys of the providers you chose (`SERPAPI_KEY`, `OPENROUTER_API_KEY` or `OPENAI_API_KEY`, optionally `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `FIRECRAWL_API_KEY`).
+- **Leave empty:** `VSI_QA_ENABLED`, `QA_COOKIE_SECRET`, `VSI_ALLOW_DEMO_DATA`, `GOOGLE_*` and `CRON_SECRET` (scheduled checks are not functional yet).
+- The Dockerfile sets `BUILD_STANDALONE=1` itself.
 
 ## 5. Deploy
 

@@ -1,37 +1,16 @@
 [
-    {
-        "id": "f001",
-        "category": "Company",
-        "fact": "SalesboxAI has been operational since at least 2024.",
-        "verification_status": "Verified",
-        "last_checked": "2025-02-09"
-    },
-    {
-        "id": "f002",
-        "category": "Company",
-        "fact": "SalesboxAI is owned by Salesbox, LLC.",
-        "verification_status": "Verified",
-        "last_checked": "2025-02-09"
-    },
-    {
-        "id": "f003",
-        "category": "Company",
-        "fact": "Email inquiries regarding privacy can be sent to privacy@salesbox.ai.",
-        "verification_status": "Verified",
-        "last_checked": "2025-02-09"
-    },
-    {
-        "id": "f004",
-        "category": "Company",
-        "fact": "SalesboxAI can be reached at 347-871-2990.",
-        "verification_status": "Verified",
-        "last_checked": "2025-02-09"
-    },
-    {
-        "id": "f005",
-        "category": "Security",
-        "fact": "SalesboxAI is SOC 2 Type II certified.",
-        "verification_status": "Pending",
-        "last_checked": "2025-02-09"
-    }
+  {
+    "id": "f001",
+    "category": "Company",
+    "fact": "ExampleBrand is a fictional company used for demo data.",
+    "verification_status": "Verified",
+    "last_checked": "2026-01-01"
+  },
+  {
+    "id": "f002",
+    "category": "Contact",
+    "fact": "Privacy questions can be sent to privacy@example.com.",
+    "verification_status": "Unverified",
+    "last_checked": "2026-01-01"
+  }
 ]

@@ -102,7 +102,7 @@
 |-----------|-------------|--------|
 | `$prompt` | The search query to scan | Any string |
 | `$apiKey` | SerpAPI key from `.env` | String |
-| `$brandName` | Brand to check for mentions | e.g. `"Tatras"` |
+| `$brandName` | Brand to check for mentions | e.g. `"ExampleClient"` |
 | `$location` | Target market | `"us"` → United States, `"ae"` → UAE |
 
 **Response parsing logic:**
@@ -176,7 +176,7 @@
     },
     {
       "role": "user",
-      "content": "Query: \"...\"\n\n1. Provide a comprehensive answer...\n2. Check if brand \"Tatras\" is mentioned...\n3. Return JSON: {response_text, brand_mentioned, sentiment}"
+      "content": "Query: \"...\"\n\n1. Provide a comprehensive answer...\n2. Check if brand \"ExampleClient\" is mentioned...\n3. Return JSON: {response_text, brand_mentioned, sentiment}"
     }
   ],
   "temperature": 0.7,
@@ -273,7 +273,7 @@ This triggers:
 {
   "id": "q001",
   "query": "generative ai solutions for enterprises",
-  "brand_name": "Tatras",
+  "brand_name": "ExampleClient",
   "location": "us",
   "client_id": "u008",
   "status": "Checked",
@@ -318,7 +318,7 @@ This triggers:
 ```json
 {
   "query": "ai strategy consulting",
-  "brand_name": "Tatras",
+  "brand_name": "ExampleClient",
   "location": "us",
   "client_id": "u008"
 }
@@ -330,11 +330,11 @@ Auto-generates: `id`, `created_at`, `status: "Pending"`, `last_checked: null`.
 
 ```json
 {
-  "email": "admin@tatras.com",
+  "email": "admin@example.com",
   "password": "SecurePass123!",
-  "name": "Tatras",
+  "name": "ExampleClient",
   "role": "client",
-  "company": "Tatras"
+  "company": "ExampleClient"
 }
 ```
 
@@ -425,11 +425,11 @@ All data is stored as JSON flat files in `data/`.
 [
   {
     "id": "u008",
-    "email": "admin@tatras.com",
+    "email": "admin@example.com",
     "password_hash": "$2y$10$...",
-    "name": "Tatras",
+    "name": "ExampleClient",
     "role": "client",
-    "company": "Tatras",
+    "company": "ExampleClient",
     "created_at": "2026-02-24 09:10:00",
     "status": "active"
   }
@@ -443,7 +443,7 @@ All data is stored as JSON flat files in `data/`.
   {
     "id": "q560",
     "query": "generative ai solutions for enterprises",
-    "brand_name": "Tatras",
+    "brand_name": "ExampleClient",
     "location": "us",
     "client_id": "u008",
     "created_at": "2026-01-15 08:30:00",
@@ -535,7 +535,7 @@ Keys are stored in `credentials/.env` (not tracked in Git):
 ```ini
 OPENAI_API_KEY="sk-..."
 SERPAPI_KEY="..."
-BRAND_NAME="SalesboxAI"
+BRAND_NAME="ExampleBrand"
 ```
 
 ### 8.2 Key Configuration Constants (`php/config.php`)

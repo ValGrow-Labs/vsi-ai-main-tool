@@ -3,13 +3,13 @@ import random
 from datetime import datetime, timedelta
 
 # Configuration
-BRANDS = ["Salsbox", "OrbitAI", "NexusFlow"]
+BRANDS = ["ExampleBrand", "OrbitAI", "NexusFlow"]
 PLATFORMS = ["ChatGPT", "Gemini", "Perplexity", "Claude", "Microsoft Copilot"]
 QUERIES = [
     "Best AI visibility tools 2026",
     "Top brand tracking software",
     "How to monitor AI overviews",
-    "Salsbox vs OrbitAI reviews",
+    "ExampleBrand vs OrbitAI reviews",
     "Automated SEO reporting tools",
     "Enterprise AI analytics platforms",
     "Competitor analysis tools for AI"

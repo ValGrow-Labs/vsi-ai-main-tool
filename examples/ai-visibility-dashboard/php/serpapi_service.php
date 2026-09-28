@@ -13,9 +13,9 @@ function scanWithSerpAPI($prompt, $apiKey, $brandName = '', $location = 'us', $o
         $envPath = CREDENTIALS_PATH . '/.env';
         if (file_exists($envPath)) {
             $env = parse_ini_file($envPath);
-            $brandName = $env['BRAND_NAME'] ?? 'SalesboxAI';
+            $brandName = $env['BRAND_NAME'] ?? 'ExampleBrand';
         } else {
-            $brandName = 'SalesboxAI';
+            $brandName = 'ExampleBrand';
         }
     }
 

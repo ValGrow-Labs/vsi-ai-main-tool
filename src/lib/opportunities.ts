@@ -218,7 +218,7 @@ const SIGNAL_MAP: Record<string, OpportunitySignal> = {
         why: "Your winning page has a repeatable formula — other keywords need the same treatment.",
       },
       {
-        action: "Set up a weekly check — AIO citation positions shift when competitors improve content",
+        action: "Re-run this check regularly — AIO citation positions shift when competitors improve content",
         why: "Defending is easier than recapturing — early detection prevents loss.",
       },
     ],

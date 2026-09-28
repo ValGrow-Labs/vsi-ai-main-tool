@@ -16,7 +16,7 @@ export default async function ClientSettingsPage({
  const session = await requireAgency();
 
  const isSuperAdmin = session.role === "super_admin";
- const clientQ = supabase.from("clients").select("id, name, brand_name, website, ai_mode_enabled, ai_overview_enabled, rank_tracking_enabled, chatgpt_enabled, llm_mentions_enabled, brief_model_override, location_override, check_frequency").eq("id", id);
+ const clientQ = supabase.from("clients").select("id, name, brand_name, website, ai_mode_enabled, ai_overview_enabled, rank_tracking_enabled, chatgpt_enabled, llm_mentions_enabled, brief_model_override, location_override").eq("id", id);
  const { data: rawClient } = await (isSuperAdmin ? clientQ : clientQ.eq("agency_id", session.agencyId)).single();
 
   const client = rawClient;
@@ -63,7 +63,6 @@ export default async function ClientSettingsPage({
  rank_tracking_enabled: client.rank_tracking_enabled,
  chatgpt_enabled: client.chatgpt_enabled,
  llm_mentions_enabled: client.llm_mentions_enabled,
- check_frequency: client.check_frequency ?? "manual",
  brief_model_override: client.brief_model_override ?? "",
  location_override: client.location_override ?? "",
  }}

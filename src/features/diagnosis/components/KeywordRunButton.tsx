@@ -43,7 +43,7 @@ export default function KeywordRunButton({ clientId, keywordId }: Props) {
  router.refresh();
  setTimeout(() => { setDone(false); setSummary(null); }, 5000);
  } else {
- setError(firstErr ?? "Server captured no data. Use 'Run with Browser' for brand or low-volume queries.");
+ setError(firstErr ?? "No results were captured for this search. Please try again later.");
  }
  } catch (e) {
  setError(e instanceof Error ? e.message : "Network error");

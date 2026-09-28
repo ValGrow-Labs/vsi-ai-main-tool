@@ -341,13 +341,13 @@ function handleRunAiQueryCheck() {
     $envPath = CREDENTIALS_PATH . '/.env';
     $serpApiKey = '';
     $openApiKey = '';
-    $globalBrandName = 'SalesboxAI';
+    $globalBrandName = 'ExampleBrand';
 
     if (file_exists($envPath)) {
         $env = parse_ini_file($envPath);
         $serpApiKey = $env['SERPAPI_KEY'] ?? '';
         $openApiKey = $env['OPENAI_API_KEY'] ?? '';
-        $globalBrandName = $env['BRAND_NAME'] ?? 'SalesboxAI';
+        $globalBrandName = $env['BRAND_NAME'] ?? 'ExampleBrand';
     }
     
     if (empty($serpApiKey)) {
@@ -499,14 +499,14 @@ function handleGetSettings() {
     $settings = [
         'openai_key' => '',
         'serpapi_key' => '',
-        'brand_name' => 'SalesboxAI'
+        'brand_name' => 'ExampleBrand'
     ];
     
     if (file_exists($envPath)) {
         $env = parse_ini_file($envPath);
         $settings['openai_key'] = $env['OPENAI_API_KEY'] ?? '';
         $settings['serpapi_key'] = $env['SERPAPI_KEY'] ?? '';
-        $settings['brand_name'] = $env['BRAND_NAME'] ?? 'SalesboxAI';
+        $settings['brand_name'] = $env['BRAND_NAME'] ?? 'ExampleBrand';
     }
     
     // Mask keys for security

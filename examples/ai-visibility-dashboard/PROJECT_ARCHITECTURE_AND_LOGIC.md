@@ -175,7 +175,7 @@ This file implements **Share of Mention**, **sentiment scoring**, **win/loss**, 
 
 ## 11. Repository Utilities (Non-UI Scripts)
 
-The repo includes **PHP/Python one-off scripts** (e.g. `add_*.php`, `deduplicate_*.php`, `generate_data.py`, `patch_tatras_client_id.py`) for **bulk-importing**, **deduplicating**, or **repairing** `ai_queries.json` / related data. They are operational tools, not part of the browser request path.
+The client-specific one-off scripts (bulk imports, deduplication, repairs) were removed with their data; `generate_data.py` remains as a synthetic-data generator. Such scripts are for **bulk-importing**, **deduplicating**, or **repairing** `ai_queries.json` / related data. They are operational tools, not part of the browser request path.
 
 ---
 

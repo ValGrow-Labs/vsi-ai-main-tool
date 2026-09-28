@@ -18,6 +18,8 @@ interface FullScreenSignupProps {
   isLoading?: boolean;
   authError?: string;
   clearAuthError?: () => void;
+  /** Opens the password-reset request (Supabase emails a link to /auth/reset-password). */
+  onForgotPassword?: () => void;
 }
 
 const field = (invalid: boolean) =>
@@ -109,6 +111,7 @@ export const FullScreenSignup = ({
   isLoading = false,
   authError = "",
   clearAuthError,
+  onForgotPassword,
 }: FullScreenSignupProps = {}) => {
   const [mode, setMode] = useState<AuthMode>(initialMode);
   // A confirmation notice belongs to sign-up; "use a different email" lets the person leave it.
@@ -287,6 +290,13 @@ export const FullScreenSignup = ({
                     placeholder="Enter your password"
                     trailing={<PasswordToggle shown={showPassword} onToggle={() => setShowPassword((p) => !p)} />}
                   />
+                  {onForgotPassword && (
+                    <div className="-mt-2 flex justify-end">
+                      <button type="button" onClick={onForgotPassword} className={`${linkButton} text-support`}>
+                        Forgot password?
+                      </button>
+                    </div>
+                  )}
                   <button type="submit" disabled={isLoading} className={primaryButton}>
                     <SubmitLabel loading={isLoading} busy="Signing in" idle="Sign in" />
                   </button>

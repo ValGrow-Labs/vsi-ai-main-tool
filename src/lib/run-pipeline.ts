@@ -2,7 +2,8 @@ import { createClient } from "@/lib/supabase/server";
 import { fetchRank } from "@/lib/serper";
 import { fetchAIO } from "@/lib/serpapi";
 import { runChatGPTCheck, type ChatGPTCheckResult, type ProjectCompetitor } from "@/lib/chatgpt-check";
-import { failureReason, type AiCheckStatus, type RankStatus } from "@/lib/provider-status";
+import { failureReason, type AiCheckStatus, type ProviderFailureReason, type RankStatus } from "@/lib/provider-status";
+import { logProviderError } from "@/lib/provider-response";
 import { AI_ENGINES } from "@/lib/ai-engines";
 import type { AIOResult, SerpResult } from "@/types/search";
 import { getSetting } from "@/lib/settings";
@@ -71,8 +72,28 @@ export type BuildRowOutcome =
   | { kind: "no_data"; failures: string[] }
   | { kind: "demo" };
 
-function reasonText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+/**
+ * Fixed wording for a failed check. These strings reach the project's organization (the
+ * /api/run-client response, the Run button, analysis_jobs.stages_data), so they never carry the
+ * provider's own error text, which can include upstream response bodies, URLs with api_key or
+ * vendor detail. The raw error is logged server-side by the caller.
+ */
+const FAILURE_TEXT: Record<ProviderFailureReason, string> = {
+  PROVIDER_NOT_CONFIGURED: "the provider isn't configured",
+  PROVIDER_AUTH_FAILED: "the provider rejected our credentials",
+  PROVIDER_RATE_LIMITED: "the provider is rate limited, try again later",
+  PROVIDER_TIMEOUT: "the provider took too long to answer",
+  PROVIDER_ERROR: "the provider couldn't complete the check",
+  INVALID_RESPONSE: "the provider's answer couldn't be read",
+};
+
+export function publicFailureText(reason: ProviderFailureReason | null | undefined): string {
+  return (reason && FAILURE_TEXT[reason]) || "the check couldn't be completed";
+}
+
+function reasonText(check: string, err: unknown): string {
+  logProviderError(check, err);
+  return publicFailureText(failureReason(err));
 }
 
 /**
@@ -101,7 +122,7 @@ export function buildSearchResultRow(input: BuildRowInput): BuildRowOutcome {
   } else if (serp.status === "rejected") {
     rankStatus = "check_failed";
     rank.reason = failureReason(serp.reason);
-    failures.push(`Google rank: ${reasonText(serp.reason)}`);
+    failures.push(`Google rank: ${reasonText("Google rank", serp.reason)}`);
   } else {
     rankStatus = serp.value.position !== null ? "found" : "not_found";
     rank.provider = serp.value.provider ?? null;
@@ -122,7 +143,7 @@ export function buildSearchResultRow(input: BuildRowInput): BuildRowOutcome {
   if (aio?.status === "rejected") {
     googleAi.status = "check_failed";
     googleAi.reason = failureReason(aio.reason);
-    failures.push(`Google AI answer: ${reasonText(aio.reason)}`);
+    failures.push(`Google AI answer: ${reasonText("Google AI answer", aio.reason)}`);
   } else if (aioValue) {
     googleAi.status = aioValue.aioPresent ? "answered" : "no_answer";
     googleAi.provider = aioValue.provider ?? "serpapi";
@@ -134,13 +155,16 @@ export function buildSearchResultRow(input: BuildRowInput): BuildRowOutcome {
   if (gpt?.status === "rejected") {
     chatgpt.status = "check_failed";
     chatgpt.reason = failureReason(gpt.reason);
-    failures.push(`ChatGPT: ${reasonText(gpt.reason)}`);
+    failures.push(`ChatGPT: ${reasonText("ChatGPT", gpt.reason)}`);
   } else if (gptValue) {
     chatgpt.status = gptValue.status;
     chatgpt.provider = gptValue.provider;
     chatgpt.model = gptValue.model;
     if (gptValue.failure_reason) chatgpt.reason = gptValue.failure_reason;
-    if (gptValue.status === "check_failed") failures.push(`ChatGPT: ${gptValue.skipped_reason ?? "check failed"}`);
+    if (gptValue.status === "check_failed") {
+      console.error("[provider] ChatGPT check failed", { reason: gptValue.failure_reason, detail: gptValue.skipped_reason });
+      failures.push(`ChatGPT: ${publicFailureText(gptValue.failure_reason)}`);
+    }
   }
   const gptAnswered = gptValue?.status === "answered" && gptValue.checked === true;
 
@@ -270,7 +294,8 @@ async function runKeyword(
     const supabase = await createClient();
     const inserted = await insertSearchResultRow(supabase, built.row);
     if (inserted.error) {
-      return { status: "error", error: `Couldn't save the result: ${inserted.error}` };
+      console.error("[run-pipeline] saving the search result failed", inserted.error);
+      return { status: "error", error: "Couldn't save the result. Please try again." };
     }
 
     // After a successful run, check whether any completed tasks for this
@@ -302,7 +327,8 @@ async function runKeyword(
     // Stored, but some checks failed: report them without discarding the real data.
     return built.failures.length ? { status: "ok", error: `Partly checked — ${built.failures.join("; ")}` } : { status: "ok" };
   } catch (err) {
-    return { status: "error", error: err instanceof Error ? err.message : "Unknown error" };
+    console.error("[run-pipeline] keyword check failed", err);
+    return { status: "error", error: "The check couldn't be completed. Please try again." };
   }
 }
 

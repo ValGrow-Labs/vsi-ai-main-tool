@@ -1,5 +1,10 @@
 # VSI: Production Architecture Audit and Migration Plan
 
+> **Point-in-time document (2026-09-18).** Several findings below have since been addressed: the
+> Dockerfile sets `BUILD_STANDALONE=1` and uses Node 22, analysis jobs have a table (migration 040),
+> and the `USING (true)` and other isolation gaps were closed by migrations 043 and 044. Verify any
+> finding against the current code before acting on it.
+
 Status: **audit and plan only. No application code, schema, or configuration has been changed.**
 Date: 2026-09-18 · Repository state: `main` @ `74df45a`
 Companion document: [`docs/design/VSI_REDESIGN_GEO_PLAN.md`](../design/VSI_REDESIGN_GEO_PLAN.md). It holds the UX and visual layer, and its screens are built inside the module phases below.

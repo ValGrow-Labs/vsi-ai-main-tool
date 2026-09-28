@@ -1,36 +1,26 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# VSI — ValGrow Search Intelligence
 
-## Getting Started
+VSI shows how a business appears in Google search and in AI answers (Google AI Overviews, ChatGPT), and turns what it finds into tasks and reports. Next.js 16 (App Router) with Supabase (Postgres, Auth, row-level security).
 
-First, run the development server:
+## Requirements
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+- Node.js 22 (see `.nvmrc`; the Docker image uses `node:22-alpine`, and `@supabase/supabase-js` requires Node 22 or later)
+- A Supabase project of your own for development. Never point a local or staging setup at another environment's project.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Local development
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. `npm ci`
+2. Copy `.env.example` to `.env.local` and fill in the Supabase URL and anon key. Every variable is described in `.env.example`; provider keys are optional, and without them provider features report that they are not configured.
+3. Apply the database: `supabase/migrations/001_baseline.sql` … `045_analytics_event_allowlist.sql`, in order (see section 10 of [docs/architecture/VSI_SUPABASE_SETUP.md](docs/architecture/VSI_SUPABASE_SETUP.md)).
+4. `npm run dev`, then open http://localhost:3000.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Checks
 
-## Learn More
+- `npm test`: unit, route and database-policy tests (the database tests replay the migrations in an in-memory PGlite database; no Supabase project or provider is contacted).
+- `npx tsc --noEmit`: type check.
+- `npm run lint`: ESLint.
 
-To learn more about Next.js, take a look at the following resources:
+## Documentation
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- [docs/architecture/VSI_SUPABASE_SETUP.md](docs/architecture/VSI_SUPABASE_SETUP.md): database, authentication, redirect URLs, environment variables.
+- [docs/deployment/DEPLOY.md](docs/deployment/DEPLOY.md): building and running the Docker image (Coolify). The deployment target has not been decided yet.
