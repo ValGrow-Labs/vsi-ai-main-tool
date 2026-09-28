@@ -88,10 +88,10 @@ export default function KeywordIntelligenceView({
  <span className="mt-1"><StatusDot color="gray" size="md" /></span>
  <div>
  <span className="text-caption font-semibold text-ink">
- AI Mode present - content pending
+ AI Overview present - content pending
  </span>
  <p className="text-caption text-ink-3 mt-0.5">
- An AI Mode was triggered for this query. Content extraction is queued - re-run to fetch.
+ An AI Overview was triggered for this query. Content extraction is queued - re-run to fetch.
  </p>
  </div>
  </div>
@@ -173,7 +173,7 @@ export default function KeywordIntelligenceView({
  {/* AIO Panel */}
  <div className="space-y-3">
  <div className="flex items-center gap-2">
- <p className="text-caption font-semibold text-ink-3">AI Mode Surface</p>
+ <p className="text-caption font-semibold text-ink-3">AI Overview Surface</p>
  <span className={`h-2 w-2 rounded-full ${aioPresent ? "bg-ink" : "bg-line"}`} />
  <span className="text-caption font-semibold text-ink-2">{aioPresent ? "Triggered" : "Not triggered"}</span>
  </div>
@@ -193,7 +193,7 @@ export default function KeywordIntelligenceView({
  {/* AIO Answer */}
  {displayText && (
  <div className="rounded-panel bg-surface border border-line p-4">
- <p className="text-caption font-semibold text-ink-3 mb-2">AI Mode Answer</p>
+ <p className="text-caption font-semibold text-ink-3 mb-2">AI Overview Answer</p>
  <div className="text-caption text-ink-2 leading-relaxed whitespace-pre-wrap max-h-72 overflow-y-auto pr-1 font-sans">
  {displayText}
  </div>
@@ -254,7 +254,7 @@ export default function KeywordIntelligenceView({
  </>
  ) : (
  <div className="rounded-panel bg-surface-2 border border-line p-5 text-center">
- <p className="text-caption text-ink-3 font-medium">No AI Mode for this query</p>
+ <p className="text-caption text-ink-3 font-medium">No AI Overview for this query</p>
  <p className="text-caption text-ink-3 mt-0.5">Google served traditional organic SERP results</p>
  </div>
  )}

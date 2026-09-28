@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -9,7 +9,6 @@ import { Notice } from "@/components/ui/Status";
 import { cn } from "@/lib/utils";
 import { addCompetitors } from "@/lib/competitor-client";
 import { addSearches } from "@/lib/keyword-client";
-import { createWorkspace } from "@/lib/workspace";
 import type { Location } from "@/types/search";
 
 import { WebsiteUrlStep } from "@/components/project-creation/WebsiteUrlStep";
@@ -19,9 +18,42 @@ import { CompetitorSelection, detectMarketFromDomain, type CompetitorItem } from
 import { AnalysisSetup, type KeywordSetupItem } from "@/components/project-creation/AnalysisSetup";
 import { StepFooter } from "@/components/project-creation/StepFooter";
 import { AnalysisStartModal } from "@/components/project-creation/AnalysisStartModal";
-import type { ExtractedWebsiteData } from "@/app/api/analyze-website/route";
+import { buildProjectSavePayload } from "@/components/project-creation/save-payload";
+import type {
+  AnalysisSuccessResponse,
+  AnalysisUnavailableResponse,
+  ExtractedWebsiteData,
+} from "@/app/api/analyze-website/route";
 
 const STEP_LABELS = ["Website", "Business", "Competitors", "SEO Setup"] as const;
+
+/** Nothing is known until the website is analysed or the user enters it. */
+const EMPTY_BUSINESS: BusinessData = {
+  brandName: "",
+  domain: "",
+  businessType: "",
+  websiteTitle: "",
+  metaDescription: "",
+  language: "",
+  location: "",
+  locationCode: "",
+  suggestedTopics: [],
+  sitemapUrl: "",
+  competitiveAdvantage: "",
+  aboutBusiness: "",
+  targetCustomers: [],
+};
+
+/** Which parts of the save already went through, so a retry doesn't create a second project. */
+interface SaveProgress {
+  projectId: string | null;
+  searches: boolean;
+  competitors: boolean;
+}
+
+const NO_SAVE: SaveProgress = { projectId: null, searches: false, competitors: false };
+
+type AnalyzeResponse = AnalysisSuccessResponse | AnalysisUnavailableResponse | { success: false; error?: string };
 
 export default function NewProjectPage() {
   const router = useRouter();
@@ -31,23 +63,11 @@ export default function NewProjectPage() {
   const [isAnalyzingWebsite, setIsAnalyzingWebsite] = useState(false);
   const [isProgressShowing, setIsProgressShowing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  // Set when automatic analysis couldn't be completed and the user enters the details by hand.
+  const [analysisUnavailable, setAnalysisUnavailable] = useState<string | null>(null);
 
   // Business summary data state
-  const [businessData, setBusinessData] = useState<BusinessData>({
-    brandName: "",
-    domain: "",
-    businessType: "E-commerce & Services",
-    websiteTitle: "",
-    metaDescription: "",
-    language: "English",
-    location: "United States",
-    locationCode: "us",
-    suggestedTopics: [],
-    sitemapUrl: "",
-    competitiveAdvantage: "",
-    aboutBusiness: "",
-    targetCustomers: [],
-  });
+  const [businessData, setBusinessData] = useState<BusinessData>(EMPTY_BUSINESS);
 
   // Competitor list state
   const [competitors, setCompetitors] = useState<CompetitorItem[]>([]);
@@ -60,11 +80,47 @@ export default function NewProjectPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showStartModal, setShowStartModal] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [saveProgress, setSaveProgress] = useState<SaveProgress>(NO_SAVE);
+
+  // A project belongs to the signed-in user's own organization. Without one, it is set up first.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const supabase = createClient();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (cancelled) return;
+        if (!user) {
+          router.replace("/login");
+          return;
+        }
+        const { data: profile, error } = await supabase.from("profiles").select("agency_id").eq("id", user.id).single();
+        if (cancelled || error) return; // couldn't check now: saving checks again and reports it
+        if (!profile?.agency_id) router.replace("/onboarding");
+      } catch {
+        // Couldn't check now; handleStartAnalysis checks again before saving.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
+
+  function applyAnalysis(business: BusinessData, comps: CompetitorItem[], kws: KeywordSetupItem[], geo: string[]) {
+    setBusinessData(business);
+    setCompetitors(comps);
+    setKeywords(kws);
+    setGeoTopics(geo);
+    setSaveProgress(NO_SAVE);
+  }
 
   /** Step 1: Trigger backend website analysis */
   async function handleAnalyzeWebsite(url: string) {
     setIsAnalyzingWebsite(true);
     setAnalysisError(null);
+    setAnalysisUnavailable(null);
 
     try {
       const res = await fetch("/api/analyze-website", {
@@ -73,40 +129,61 @@ export default function NewProjectPage() {
         body: JSON.stringify({ url }),
       });
 
-      const json = await res.json();
+      const json = (await res.json().catch(() => null)) as AnalyzeResponse | null;
 
-      if (!res.ok || !json.success) {
-        throw new Error(json.error || "We couldn't access this website. Please check the URL and try again.");
+      // Analysis couldn't be completed: continue with only what the typed domain tells us (brand and
+      // country-code market, both editable) and let the user enter the rest. Nothing is pre-selected.
+      if (json && !json.success && "status" in json && json.status === "ANALYSIS_UNAVAILABLE") {
+        const d = json.derived;
+        applyAnalysis(
+          {
+            ...EMPTY_BUSINESS,
+            brandName: d.brandName ?? "",
+            domain: d.domain,
+            location: d.location ?? "",
+            locationCode: d.locationCode ?? "",
+          },
+          [],
+          [],
+          []
+        );
+        setAnalysisUnavailable(json.message);
+        setIsAnalyzingWebsite(false);
+        setStep(2);
+        return;
+      }
+
+      if (!res.ok || !json || !json.success) {
+        const message = json && "error" in json && json.error ? json.error : null;
+        throw new Error(message || "We couldn't access this website. Please check the URL and try again.");
       }
 
       const extracted: ExtractedWebsiteData = json.data;
-      const targetLocation = extracted.location || "United States";
+      const targetLocation = extracted.location ?? "";
 
-      // Populate wizard states
-      setBusinessData({
-        brandName: extracted.brandName,
-        domain: extracted.domain,
-        businessType: extracted.businessType,
-        websiteTitle: extracted.websiteTitle,
-        metaDescription: extracted.metaDescription,
-        language: extracted.language,
-        location: targetLocation,
-        locationCode: extracted.locationCode,
-        suggestedTopics: extracted.suggestedTopics,
-        sitemapUrl: extracted.sitemapUrl,
-        competitiveAdvantage: extracted.competitiveAdvantage,
-        aboutBusiness: extracted.aboutBusiness,
-        targetCustomers: extracted.targetCustomers,
-      });
-
-      const mappedCompetitors = (extracted.suggestedCompetitors || []).map((c) => ({
-        ...c,
-        market: detectMarketFromDomain(c.domain, targetLocation),
-      }));
-
-      setCompetitors(mappedCompetitors);
-      setKeywords(extracted.suggestedKeywords || []);
-      setGeoTopics(extracted.geoTopics || []);
+      applyAnalysis(
+        {
+          brandName: extracted.brandName ?? "",
+          domain: extracted.domain,
+          businessType: extracted.businessType ?? "",
+          websiteTitle: extracted.websiteTitle ?? "",
+          metaDescription: extracted.metaDescription ?? "",
+          language: extracted.language ?? "",
+          location: targetLocation,
+          locationCode: extracted.locationCode ?? "",
+          suggestedTopics: extracted.suggestedTopics,
+          sitemapUrl: extracted.sitemapUrl ?? "",
+          competitiveAdvantage: extracted.competitiveAdvantage ?? "",
+          aboutBusiness: extracted.aboutBusiness ?? "",
+          targetCustomers: extracted.targetCustomers,
+        },
+        (extracted.suggestedCompetitors || []).map((c) => ({
+          ...c,
+          market: detectMarketFromDomain(c.domain, targetLocation),
+        })),
+        extracted.suggestedKeywords || [],
+        extracted.geoTopics || []
+      );
 
       // Switch to smooth animated progress checklist state
       setIsAnalyzingWebsite(false);
@@ -127,16 +204,13 @@ export default function NewProjectPage() {
   async function handleStartAnalysis() {
     setSubmitError(null);
 
-    // Validation of required project information
-    if (!businessData.domain || !businessData.domain.trim()) {
-      setSubmitError("Website URL is required. Please go back to Step 1 to enter your website.");
+    // Only what the user kept selected, with a search market they chose.
+    const built = buildProjectSavePayload({ business: businessData, keywords, competitors });
+    if (!built.ok) {
+      setSubmitError(built.message);
       return;
     }
-    const selectedKw = keywords.filter((k) => k.selected);
-    if (selectedKw.length === 0) {
-      setSubmitError("Please select at least one search query or topic to analyze in Step 4.");
-      return;
-    }
+    const { payload } = built;
 
     setIsSubmitting(true);
 
@@ -152,95 +226,93 @@ export default function NewProjectPage() {
         throw new Error("Your session has ended. Please sign in again to add your website.");
       }
 
-      let agencyId: string | null = null;
-      try {
-        const { data: profile } = await supabase.from("profiles").select("agency_id").eq("id", user.id).single();
-        agencyId = (profile?.agency_id as string | undefined) ?? null;
-      } catch {
-        agencyId = null;
-      }
+      let progress = saveProgress;
 
-      const brand = businessData.brandName.trim() || businessData.domain || "My Organization";
-
-      // If user profile does not have an agency_id assigned, attempt auto-creation
-      if (!agencyId) {
-        const wsResult = await createWorkspace(supabase, { name: brand });
-        if (wsResult.status === "created" || wsResult.status === "already_set_up") {
-          const { data: updatedProfile } = await supabase.from("profiles").select("agency_id").eq("id", user.id).single();
-          agencyId = (updatedProfile?.agency_id as string | undefined) ?? null;
+      // 1. Create client project (once; a retry reuses it)
+      if (!progress.projectId) {
+        const { data: profile, error: profileErr } = await supabase
+          .from("profiles")
+          .select("agency_id")
+          .eq("id", user.id)
+          .single();
+        if (profileErr) {
+          throw new Error("We couldn't load your organization. Please refresh the page and try again.");
         }
-
+        const agencyId = (profile?.agency_id as string | null | undefined) ?? null;
         if (!agencyId) {
-          // Fallback: check if any existing agency can be linked
-          const { data: existingAgency } = await supabase.from("agencies").select("id").limit(1).maybeSingle();
-          if (existingAgency?.id) {
-            agencyId = existingAgency.id;
-            await supabase.from("profiles").update({ agency_id: agencyId }).eq("id", user.id);
-          }
+          // No organization yet: it is set up on the onboarding page, never guessed here.
+          router.push("/onboarding");
+          throw new Error("Your account isn't part of an organization yet. Set one up first, then add your website.");
         }
 
-        if (!agencyId) {
-          throw new Error("We couldn't set up your organization workspace. Please refresh or sign in again.");
+        const { data: client, error: clientErr } = await supabase
+          .from("clients")
+          .insert({ ...payload.client, agency_id: agencyId })
+          .select("id")
+          .single();
+
+        if (clientErr || !client?.id) {
+          throw new Error(
+            clientErr?.message?.toLowerCase().includes("limit")
+              ? "Your plan's project limit is reached."
+              : "We couldn't create the project. Please try again."
+          );
         }
+        progress = { ...progress, projectId: client.id as string };
+        setSaveProgress(progress);
       }
 
-      // 1. Create client project
-      const { data: client, error: clientErr } = await supabase
-        .from("clients")
-        .insert({
-          name: brand,
-          website: businessData.domain,
-          brand_name: brand,
-          service_type: "seo_geo",
-          country: businessData.location || null,
-          industry: businessData.businessType || null,
-          default_location: businessData.locationCode || "us",
-          agency_id: agencyId,
-        })
-        .select("id")
-        .single();
-
-      if (clientErr || !client?.id) {
-        throw new Error(
-          clientErr?.message?.toLowerCase().includes("limit")
-            ? "Your plan's project limit is reached."
-            : "We couldn't create the project. Please try again."
-        );
-      }
-
-      const projectId = client.id as string;
+      const projectId = progress.projectId as string;
+      const failures: string[] = [];
 
       // 2. Save selected keywords
-      if (selectedKw.length > 0) {
-        await addSearches(
-          projectId,
-          selectedKw.map((k) => ({
-            keyword: k.keyword,
-            trackType: "both",
-            location: businessData.locationCode,
-          }))
-        );
+      if (!progress.searches) {
+        const kwRes = await addSearches(projectId, payload.searches);
+        if (kwRes.ok) progress = { ...progress, searches: true };
+        else failures.push(`Searches: ${kwRes.message}`);
       }
 
       // 3. Save selected competitors
-      const selectedComp = competitors.filter((c) => c.selected).map((c) => c.domain);
-      if (selectedComp.length > 0) {
-        await addCompetitors(projectId, selectedComp);
+      if (!progress.competitors) {
+        if (payload.competitorDomains.length === 0) {
+          progress = { ...progress, competitors: true };
+        } else {
+          const compRes = await addCompetitors(projectId, payload.competitorDomains);
+          if (compRes.ok) progress = { ...progress, competitors: true };
+          else failures.push(`Competitors: ${compRes.message}`);
+        }
+      }
+      setSaveProgress(progress);
+
+      if (failures.length > 0) {
+        throw new Error(
+          `The project was created, but some parts weren't saved. ${failures.join(" ")} Click Start Analysis to try them again.`
+        );
       }
 
-      // 4. Select active project context
+      // 4. Select active project context (best effort: the next page is addressed by project id)
       await fetch("/api/project/select", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId }),
-      });
+      }).catch(() => null);
 
       // 5. Trigger multi-stage analysis background job
-      await fetch("/api/jobs/analysis", {
+      const jobRes = await fetch("/api/jobs/analysis", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ client_id: projectId }),
       }).catch(() => null);
+
+      if (!jobRes || !jobRes.ok) {
+        const jobBody = jobRes
+          ? ((await jobRes.json().catch(() => ({}))) as { error?: { message?: string } | string })
+          : {};
+        const detail = typeof jobBody.error === "string" ? jobBody.error : jobBody.error?.message;
+        throw new Error(
+          `Your project was saved, but the analysis couldn't be started${detail ? `: ${detail}` : "."} Click Start Analysis to try again.`
+        );
+      }
 
       // 6. Move user to the real-time Analysis Process Screen
       router.push(`/dashboard/clients/${projectId}/analysis`);
@@ -254,6 +326,8 @@ export default function NewProjectPage() {
     router.push("/dashboard");
     router.refresh();
   }
+
+  const analyzed = !analysisUnavailable;
 
   return (
     <PageContainer className="max-w-[1020px]">
@@ -290,6 +364,14 @@ export default function NewProjectPage() {
 
       {submitError && <Notice tone="critical" title={submitError} />}
 
+      {analysisUnavailable && step > 1 && (
+        <Notice tone="attention" title="Automatic analysis couldn't be completed">
+          {analysisUnavailable} Enter your business details, competitors and searches yourself. Nothing has been
+          filled in for you except the brand{businessData.location ? " and country" : ""} taken from your web
+          address, which you can change.
+        </Notice>
+      )}
+
       {/* STEP 1 — Website URL & Progress */}
       {step === 1 && (
         <>
@@ -311,6 +393,7 @@ export default function NewProjectPage() {
         <>
           <BusinessSummary
             data={businessData}
+            analyzed={analyzed}
             onUpdate={(updated) => setBusinessData((prev) => ({ ...prev, ...updated }))}
           />
           <StepFooter
@@ -327,7 +410,7 @@ export default function NewProjectPage() {
           <CompetitorSelection
             initialCompetitors={competitors}
             userDomain={businessData.domain}
-            defaultMarket={businessData.location || "United States"}
+            defaultMarket={businessData.location}
             onChange={(updatedComps) => setCompetitors(updatedComps)}
           />
           <StepFooter
@@ -343,10 +426,11 @@ export default function NewProjectPage() {
       {step === 4 && (
         <>
           <AnalysisSetup
+            analyzed={analyzed}
             topics={businessData.suggestedTopics}
             keywords={keywords}
             location={businessData.location}
-            locationCode={businessData.locationCode as Location}
+            locationCode={businessData.locationCode as Location | ""}
             language={businessData.language}
             targetCustomers={businessData.targetCustomers}
             competitors={competitors.filter((c) => c.selected).map((c) => c.domain)}

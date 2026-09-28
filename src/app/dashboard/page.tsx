@@ -3,6 +3,7 @@ import { requireProjectContext } from "@/lib/project-context";
 import { displayDomain } from "@/lib/project-types";
 import { loadProjectOverview, findingTaskKey } from "@/lib/project-summary";
 import { formatShortDate } from "@/lib/format";
+import { isAuditProblem } from "@/lib/site-audit/checks";
 import OverviewView, { type OverviewData } from "@/features/visibility/components/OverviewView";
 import KeywordResearchView from "@/features/visibility/components/KeywordResearchView";
 
@@ -48,7 +49,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     loadError: null,
     website: {
       score: audit?.completed?.score ?? null,
-      problems: audit?.completed ? audit.completed.checks.filter((c) => c.status !== "pass").length : 0,
+      problems: audit?.completed ? audit.completed.checks.filter(isAuditProblem).length : 0,
       checkedAt: audit?.completed?.completed_at ?? null,
       running: !!audit?.running,
       error:

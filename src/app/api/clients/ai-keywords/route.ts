@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAgency } from "@/lib/auth";
+import { requireAgencyApi } from "@/lib/auth";
 import { normaliseDomain } from "@/lib/url-input";
 import { scrapeWebsiteMetadata, generateAIKeywordsAndQueries } from "@/lib/ai-keyword-generator";
 import { LOCATIONS, type Location } from "@/types/search";
@@ -12,7 +12,9 @@ export const dynamic = "force-dynamic";
  * for the user to pick from, never saved automatically.
  */
 export async function POST(req: NextRequest) {
-  await requireAgency();
+  // 401 signed out, 403 disabled / no organization — JSON, never a redirect.
+  const auth = await requireAgencyApi();
+  if (auth instanceof Response) return auth;
 
   let body: { domain?: unknown; brandName?: unknown; industry?: unknown; location?: unknown };
   try {

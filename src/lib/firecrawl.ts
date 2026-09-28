@@ -1,3 +1,6 @@
+import "server-only";
+import { assertPublicUrl, safeFetch } from "@/lib/net/safe-fetch";
+
 export interface FirecrawlResult {
   markdown: string;
   title: string | null;
@@ -68,17 +71,17 @@ function htmlToMarkdown(html: string): string {
 }
 
 async function scrapeWithFallback(url: string): Promise<FirecrawlResult> {
-  const res = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; VSI/1.0)",
-      "Accept": "text/html",
-    },
-    signal: AbortSignal.timeout(12000),
+  // Public hosts only, pinned to the vetted IP, every redirect re-checked, 12s / 2 MB caps.
+  const res = await safeFetch(url, {
+    timeoutMs: 12000,
+    maxBytes: 2_000_000,
+    userAgent: "Mozilla/5.0 (compatible; VSI/1.0)",
+    accept: "text/html",
   });
 
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-  const html = await res.text();
+  const html = res.body;
   const markdown = htmlToMarkdown(html);
 
   const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
@@ -89,18 +92,25 @@ async function scrapeWithFallback(url: string): Promise<FirecrawlResult> {
     markdown: markdown.slice(0, 8000),
     title: titleMatch?.[1]?.trim() ?? null,
     description: descMatch?.[1]?.trim() ?? null,
-    url,
+    url: res.url,
     wordCount: markdown.split(/\s+/).filter(Boolean).length,
     source: "fallback",
   };
 }
 
+/**
+ * Scrape one user- or third-party-supplied URL. The URL must pass the outbound policy (public
+ * hosts only; see src/lib/net/safe-fetch.ts) BEFORE anything happens: we never ask Firecrawl to
+ * fetch an internal address, and the fallback fetch goes through safeFetch. An UnsafeUrlError is
+ * thrown straight to the caller (no fallback attempt).
+ */
 export async function scrapeUrl(url: string): Promise<FirecrawlResult> {
+  const vetted = (await assertPublicUrl(url)).toString();
   try {
-    return await scrapeWithFirecrawl(url);
+    return await scrapeWithFirecrawl(vetted);
   } catch {
     // Firecrawl timed out or failed — use HTML fallback
-    return await scrapeWithFallback(url);
+    return await scrapeWithFallback(vetted);
   }
 }
 

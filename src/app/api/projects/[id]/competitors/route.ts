@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireAgency, type SessionContext } from "@/lib/auth";
+import { requireAgencyApi, type SessionContext } from "@/lib/auth";
 import { UUID_PATTERN } from "@/lib/project-types";
 import { MAX_COMPETITORS, validateCompetitorDomain } from "@/lib/project-competitors";
 import { isMissingTableError } from "@/lib/site-audit/store";
@@ -25,7 +25,8 @@ async function findProject(session: SessionContext & { agencyId: string }, proje
 
 /** List the competitors added to a project. */
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const session = await requireAgency();
+  const session = await requireAgencyApi();
+  if (session instanceof Response) return session;
   const { id } = await ctx.params;
   if (!UUID_PATTERN.test(id)) return error(400, "bad_request", "Choose a valid project.");
   const { supabase, project } = await findProject(session, id);
@@ -45,7 +46,8 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
 
 /** Add one or more competitors: { domains: string[] } or { domain: string, name?: string }. */
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const session = await requireAgency();
+  const session = await requireAgencyApi();
+  if (session instanceof Response) return session;
   const { id } = await ctx.params;
   if (!UUID_PATTERN.test(id)) return error(400, "bad_request", "Choose a valid project.");
 

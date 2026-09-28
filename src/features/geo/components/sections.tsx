@@ -129,8 +129,7 @@ export function Overview({ summary: s, trend }: { summary: GeoSummary; trend: Tr
 /* ------------------------------------------------------- Engine coverage */
 
 const ENGINE_ICON: Record<string, IconType> = {
-  google_ai_mode: SiGoogle,
-  ai_overviews: SiGoogle,
+  google_ai_overview: SiGoogle,
   chatgpt: RiOpenaiFill,
   Gemini: SiGooglegemini,
   Perplexity: SiPerplexity,
@@ -431,8 +430,8 @@ const STATE_TONE: Record<SearchState, Tone> = {
   not_checked: "neutral",
 };
 
-export function TrackedSearches({ summary: s, projectId, showOverviews }: { summary: GeoSummary; projectId: string; showOverviews: boolean }) {
-  const engines = s.engines.filter((e) => e.id !== "ai_overviews" || showOverviews);
+export function TrackedSearches({ summary: s, projectId }: { summary: GeoSummary; projectId: string }) {
+  const engines = s.engines;
   const sorted = [...s.searches].sort((a, b) => Number(a.appears) - Number(b.appears) || Number(b.answered) - Number(a.answered));
   const first = sorted.slice(0, 8);
   const rest = sorted.slice(8);

@@ -29,7 +29,8 @@ interface NotificationsContextType {
   markAsRead: (id: string) => void;
   markAllAsRead: () => void;
   deleteNotification: (id: string) => void;
-  clearAllNotifications: () => Promise<void>;
+  /** Resolves true only when the server confirmed the delete. */
+  clearAllNotifications: () => Promise<boolean>;
   createNotification: (data: Partial<Notification>) => Promise<void>;
   refreshNotifications: () => Promise<void>;
   getNotificationBySlug: (slug: string) => Notification | undefined;
@@ -177,12 +178,16 @@ export function NotificationsProvider({ children, userId }: { children: ReactNod
     // 1. Optimistically clear local state and set cleared flag
     syncState([], true);
 
-    // 2. Call DELETE /api/notifications API to purge DB rows permanently
+    // 2. Call DELETE /api/notifications API to purge DB rows permanently.
+    // On failure, reload what the server still has instead of pretending.
     try {
-      await fetch("/api/notifications", { method: "DELETE" });
+      const res = await fetch("/api/notifications", { method: "DELETE" });
+      if (res.ok) return true;
     } catch (e) {
       console.error("Failed to delete notifications on server:", e);
     }
+    await fetchNotifications();
+    return false;
   };
 
   // Delete single notification

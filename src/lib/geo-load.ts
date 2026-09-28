@@ -4,6 +4,7 @@ import { isDummySupabase } from "@/lib/auth";
 import { getSetting } from "@/lib/settings";
 import { loadProjectFlags, loadRecentResults, loadTrackedKeywords, type ProjectFlags, type TrackedKeywordRow } from "@/lib/project-data-load";
 import { buildBrandTokens } from "@/lib/brand-match";
+import { AI_ENGINES } from "@/lib/ai-engines";
 import { computeGeo, highlightBrand, type EngineId, type EvidenceSegment, type GeoRow, type GeoSummary } from "@/lib/geo";
 import type { ProjectSummary } from "@/lib/project-types";
 import type { AIOCitation } from "@/types/search";
@@ -11,8 +12,8 @@ import type { AIOCitation } from "@/types/search";
 // Only columns the AI visibility summary reads. This list is fetched for up to 3000 rows per page.
 export const GEO_COLUMNS =
   "tracked_keyword_id, keyword, created_at, aio_present, mentioned_in_text, client_cited, cited_domains, " +
-  "ai_overview_present, ai_overview_client_cited, ai_overview_cited_domains, chatgpt_checked, chatgpt_brand_mentioned, " +
-  "chatgpt_brand_cited, chatgpt_competitors, chatgpt_cited_urls";
+  "chatgpt_checked, chatgpt_brand_mentioned, " +
+  "chatgpt_brand_cited, chatgpt_competitors, chatgpt_cited_urls, chatgpt_entity_match";
 
 export interface AnswerEvidence {
   keyword: string;
@@ -67,15 +68,17 @@ export function buildGeo(
   }
 
   const enabled: Record<EngineId, boolean> = {
-    google_ai_mode: flags?.ai_mode_enabled ?? true,
-    ai_overviews: flags?.ai_overview_enabled ?? false,
+    // The Google AI Overview check is switched by the ai_mode_enabled column (legacy name).
+    google_ai_overview: flags?.ai_mode_enabled ?? true,
     chatgpt: flags?.chatgpt_enabled ?? chatgptSystem ?? true,
   };
 
   const active = new Set(
     keywordsRes.rows.filter((k) => k.is_active && (k.track_type === "geo" || k.track_type === "both")).map((k) => k.id),
   );
-  const rows = ((rowsRes.data ?? []) as unknown as GeoRow[]).filter((r) => !r.tracked_keyword_id || active.has(r.tracked_keyword_id));
+  // Only checks of searches the project still tracks. Rows whose search was
+  // removed (tracked_keyword_id set to NULL) no longer count, as on Search Visibility.
+  const rows = ((rowsRes.data ?? []) as unknown as GeoRow[]).filter((r) => !!r.tracked_keyword_id && active.has(r.tracked_keyword_id));
   const summary = computeGeo(rows, { domain: project.website, enabled });
   return { state: "ok", summary, enabled, activeSearches: active.size };
 }
@@ -91,8 +94,8 @@ export async function finishGeo(project: ProjectSummary, core: GeoCore, opts: { 
  * where you don't (the opportunity). Texts come straight from stored checks.
  */
 async function loadEvidence(project: ProjectSummary, summary: GeoSummary): Promise<AnswerEvidence[]> {
-  const withAiMode = summary.searches.filter((s) => s.states.google_ai_mode !== "not_checked" && s.states.google_ai_mode !== "no_answer");
-  const picks = [withAiMode.find((s) => s.appears), withAiMode.find((s) => !s.appears)].filter((p): p is NonNullable<typeof p> => !!p);
+  const withGoogleAnswer = summary.searches.filter((s) => s.states.google_ai_overview !== "not_checked" && s.states.google_ai_overview !== "no_answer");
+  const picks = [withGoogleAnswer.find((s) => s.appears), withGoogleAnswer.find((s) => !s.appears)].filter((p): p is NonNullable<typeof p> => !!p);
   if (picks.length === 0) return [];
 
   const supabase = await createClient();
@@ -122,7 +125,7 @@ async function loadEvidence(project: ProjectSummary, summary: GeoSummary): Promi
     out.push({
       keyword: data.keyword as string,
       keywordId: (data.tracked_keyword_id as string | null) ?? null,
-      engineLabel: "Google AI Mode",
+      engineLabel: AI_ENGINES.google_ai_overview.label,
       checkedAt: data.created_at as string,
       appears: pick.appears,
       segments: highlightBrand(trimAnswer(text), tokens),

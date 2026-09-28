@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireAgency } from "@/lib/auth";
+import { apiServerError, requireAgencyApi } from "@/lib/auth";
 import { buildKeywordReport, generateShareToken, type KeywordReportType } from "@/lib/keyword-report-builder";
 import { track } from "@/lib/track";
+import { shareLinkExpiry } from "@/lib/report-share";
 
 export const maxDuration = 180;
 export const dynamic = "force-dynamic";
@@ -11,13 +12,16 @@ const VALID_TYPES: KeywordReportType[] = ["keyword_summary", "keyword_detailed",
 
 export async function POST(req: NextRequest) {
  try {
+ // Authorise first: an anonymous caller learns nothing about validation rules.
+ const session = await requireAgencyApi();
+ if (session instanceof Response) return session;
+
  const { tracked_keyword_id, type } = (await req.json()) as { tracked_keyword_id?: string; type?: string };
  if (!tracked_keyword_id) return NextResponse.json({ error: "tracked_keyword_id required" }, { status: 400 });
  if (!type || !VALID_TYPES.includes(type as KeywordReportType)) {
  return NextResponse.json({ error: "type must be one of: " + VALID_TYPES.join(", ") }, { status: 400 });
  }
 
- const session = await requireAgency();
  const supabase = await createClient();
  const isSuperAdmin = session.role === "super_admin";
 
@@ -41,6 +45,7 @@ export async function POST(req: NextRequest) {
  tracked_keyword_id,
  type,
  share_token: shareToken,
+ expires_at: shareLinkExpiry(),
  status: "pending",
  content: { schema: "vsi-keyword-report-v1", type, status: "pending" },
  created_by: session.userId,
@@ -48,7 +53,7 @@ export async function POST(req: NextRequest) {
  .select("id, share_token")
  .single();
  if (insertErr || !inserted) {
- return NextResponse.json({ error: insertErr?.message ?? "Failed to enqueue report" }, { status: 500 });
+ return apiServerError("keyword-report/generate insert", insertErr ?? new Error("no row"), "The report couldn't be started. Please try again.");
  }
 
  const origin = req.headers.get("origin") ?? "https://searchintel.valgrowlabs.com";
@@ -92,7 +97,8 @@ export async function POST(req: NextRequest) {
  const supa = await createClient();
  await supa
  .from("reports")
- .update({ status: "failed", error_message: e instanceof Error ? e.message : "Unknown error" })
+ // The raw error stays in the server log; the status API shows this text to the browser.
+ .update({ status: "failed", error_message: "Report generation failed. Please try again." })
  .eq("id", reportId);
  }
  });
@@ -105,9 +111,6 @@ export async function POST(req: NextRequest) {
  status: "pending",
  }, { status: 202 });
  } catch (err) {
- return NextResponse.json(
- { error: err instanceof Error ? err.message : "Failed" },
- { status: 500 }
- );
+ return apiServerError("keyword-report/generate", err);
  }
 }

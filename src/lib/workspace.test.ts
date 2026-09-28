@@ -76,7 +76,9 @@ describe("createWorkspace: self-service (no invite)", () => {
     const { rpc, client: c } = client({ error: { code: "23505", message: "Organization slug is already in use" } });
     const result = await createWorkspace(c, { name: "Acme" });
     expect(rpc).toHaveBeenCalledTimes(3);
-    expect(result).toEqual({ status: "error", message: "Could not create the organization. Try a different name." });
+    // Wording updated in fac45b0 (it now also says why); the behaviour under test is unchanged.
+    expect(result).toEqual({ status: "error", message: "Could not create the organization. Organization name or address is already in use. Try a different name." });
+    expect(result.status === "error" && result.message).not.toMatch(/slug|23505|duplicate key/i);
   });
 
   it("treats an account that already has an organization as done, not as a failure", async () => {
@@ -87,7 +89,8 @@ describe("createWorkspace: self-service (no invite)", () => {
 
   it("explains an expired session, a disabled account and a missing profile", async () => {
     const expired = await createWorkspace(client({ error: { code: "42501", message: "Not signed in" } }).client, { name: "Acme" });
-    expect(expired).toMatchObject({ status: "error", message: expect.stringMatching(/Sign in again/) });
+    // Wording updated in fac45b0 ("Please sign in before creating a workspace."); it still tells the person to sign in.
+    expect(expired).toMatchObject({ status: "error", message: expect.stringMatching(/sign in/i) });
     const disabled = await createWorkspace(client({ error: { code: "42501", message: "This account is disabled" } }).client, { name: "Acme" });
     expect(disabled).toMatchObject({ status: "error", message: expect.stringMatching(/disabled/) });
     const missing = await createWorkspace(client({ error: { code: "P0002", message: "Profile not found for this account" } }).client, { name: "Acme" });
@@ -104,6 +107,43 @@ describe("createWorkspace: self-service (no invite)", () => {
   it("shows the real problem but never raw database text", async () => {
     const result = await createWorkspace(client({ error: { code: "XX000", message: 'relation "public.agencies" violates internal thing pg_xyz' } }).client, { name: "Acme" });
     expect(result).toEqual({ status: "error", message: "Account setup failed. Please try again." });
+  });
+
+  it.each([
+    { code: "23503", message: 'insert or update on table "agencies" violates foreign key constraint "agencies_owner_fkey"' },
+    { code: "23514", message: 'new row for relation "profiles" violates check constraint "profiles_role_check"' },
+    { code: "42501", message: "permission denied for table agencies" },
+    { code: "42703", message: 'column "p_slug" does not exist at character 17: select * from public.agencies where slug = $1' },
+    { code: "P0001", message: "ERROR:  something unexpected\nCONTEXT:  PL/pgSQL function create_own_organization(text,text) line 42 at RAISE" },
+    { code: "", message: "" },
+  ])("unknown database error $code → the generic message, with no database text", async (error) => {
+    for (const inviteCode of ["", "VG-AAAA-BBBB"]) {
+      const result = await createWorkspace(client({ error }).client, { name: "Acme", inviteCode });
+      expect(result).toEqual({ status: "error", message: "Account setup failed. Please try again." });
+      const text = JSON.stringify(result);
+      for (const leak of [/relation|table|column|constraint|violates|select |public\.|pl\/pgsql|context|line \d+|_fkey|_check/i, /\b(235|425|427|P0)\d{2}\b/]) {
+        expect(text).not.toMatch(leak);
+      }
+    }
+  });
+
+  it("the setup-missing message names no database function, migration or tool", async () => {
+    const result = await createWorkspace(client({ error: { code: "PGRST202", message: "Could not find the function public.create_own_organization" } }).client, { name: "Acme" });
+    expect(result.status).toBe("unavailable");
+    expect(JSON.stringify(result)).not.toMatch(/create_own_organization|complete_onboarding|rpc|migration|\.sql|sql editor|supabase/i);
+  });
+
+  it("known, safe errors keep their own messages", async () => {
+    const cases: [{ code?: string; message: string }, RegExp][] = [
+      [{ code: "42501", message: "This account is disabled" }, /account is disabled/],
+      [{ code: "P0002", message: "Profile not found for this account" }, /account profile/],
+      [{ code: "22023", message: "Organization name must be 80 characters or fewer" }, /at most 80/],
+      [{ code: "22023", message: "Organization name is required" }, /Enter a name/],
+    ];
+    for (const [error, expected] of cases) {
+      const result = await createWorkspace(client({ error }).client, { name: "Acme" });
+      expect(result).toMatchObject({ status: "error", message: expect.stringMatching(expected) });
+    }
   });
 
   it("survives a network failure and reports it", async () => {

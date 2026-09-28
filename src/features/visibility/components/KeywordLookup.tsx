@@ -4,10 +4,20 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { markResearchIntent, sessionIntentStorage } from "@/lib/research-request";
 
 export const LOOKUP_LOCATIONS = ["United Arab Emirates", "United States", "United Kingdom", "India", "Sri Lanka", "Canada", "Australia", "Germany", "Singapore"];
 
-export default function KeywordLookup({ initial = "", initialLocation = "United Arab Emirates" }: { initial?: string; initialLocation?: string }) {
+export default function KeywordLookup({
+  initial = "",
+  initialLocation = "United Arab Emirates",
+  onSameLookup,
+}: {
+  initial?: string;
+  initialLocation?: string;
+  /** Called instead of navigating when the search and country are the ones already shown. */
+  onSameLookup?: () => void;
+}) {
   const router = useRouter();
   const [q, setQ] = useState(initial);
   const [loc, setLoc] = useState(initialLocation);
@@ -17,7 +27,14 @@ export default function KeywordLookup({ initial = "", initialLocation = "United 
       className="flex flex-col gap-2 sm:flex-row"
       onSubmit={(e) => {
         e.preventDefault();
-        if (q.trim()) router.push(`/dashboard?q=${encodeURIComponent(q.trim())}&loc=${encodeURIComponent(loc)}`);
+        if (!q.trim()) return;
+        if (onSameLookup && q.trim() === initial && loc === initialLocation) {
+          onSameLookup();
+          return;
+        }
+        // Submitting is the deliberate action that lets the results page run the (paid) lookup once.
+        markResearchIntent(sessionIntentStorage(), q.trim(), loc);
+        router.push(`/dashboard?q=${encodeURIComponent(q.trim())}&loc=${encodeURIComponent(loc)}`);
       }}
     >
       <label className="sr-only" htmlFor="lookup-q">

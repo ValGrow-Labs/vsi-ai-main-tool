@@ -69,19 +69,21 @@ export default function NotificationDetailsPage() {
         }),
       });
       
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       
-      if (data.resolution) {
-        alert("AI Resolution: " + data.resolution);
-      } else if (data.error) {
-        alert("Error: " + data.error);
+      // Keep the notification unless a real suggestion came back: nothing was resolved otherwise.
+      if (response.ok && data.resolution) {
+        alert("AI suggestion: " + data.resolution);
+        deleteNotification(notification.id);
+        router.push("/dashboard/notifications");
+        return;
       }
+      alert("Couldn't get an AI suggestion: " + (data.error || "the AI service didn't answer."));
     } catch (error) {
       console.error("Failed to resolve:", error);
+      alert("Couldn't get an AI suggestion. Please try again.");
     }
-
-    deleteNotification(notification.id);
-    router.push("/dashboard/notifications");
+    setIsNavigating(false);
   };
 
   const handleActionClick = (action: string) => {
@@ -280,8 +282,8 @@ export default function NotificationDetailsPage() {
                 <div>
                   <p className="text-caption text-ink-3 font-semibold mb-1">Status</p>
                   <div className="flex items-center gap-1.5 mt-1">
-                    <div className="w-2 h-2 rounded-full bg-positive" />
-                    <p className="text-body font-semibold text-positive">Processed</p>
+                    <div className={`w-2 h-2 rounded-full ${notification.isRead ? "bg-ink-3" : "bg-positive"}`} />
+                    <p className={`text-body font-semibold ${notification.isRead ? "text-ink-2" : "text-positive"}`}>{notification.isRead ? "Read" : "Unread"}</p>
                   </div>
                 </div>
               </div>

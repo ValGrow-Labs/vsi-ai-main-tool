@@ -1,3 +1,6 @@
+import { demoDataAllowed, serpApiKey } from "@/lib/provider-status";
+import { demoOrganicResults } from "@/lib/demo-data";
+
 export interface SerpSearchResultItem {
   position: number;
   title: string;
@@ -8,6 +11,8 @@ export interface SerpSearchResultItem {
 
 export interface SerpSearchResponse {
   success: true;
+  /** True only for opt-in development placeholder data (VSI_ALLOW_DEMO_DATA). */
+  isDemo?: boolean;
   query: string;
   total_results: number;
   results: SerpSearchResultItem[];
@@ -18,13 +23,18 @@ export interface SerpSearchResponse {
   };
 }
 
+export type SearchErrorCode = "SEARCH_UNAVAILABLE" | "CHECK_FAILED";
+
 export class SerpApiError extends Error {
   statusCode: number;
+  /** SEARCH_UNAVAILABLE: no provider configured. CHECK_FAILED: the provider call failed. */
+  code: SearchErrorCode;
 
-  constructor(message: string, statusCode: number = 500) {
+  constructor(message: string, statusCode: number = 500, code: SearchErrorCode = "CHECK_FAILED") {
     super(message);
     this.name = "SerpApiError";
     this.statusCode = statusCode;
+    this.code = code;
   }
 }
 
@@ -32,54 +42,20 @@ export async function searchSerpApi(
   query: string,
   options: { engine?: string; gl?: string; hl?: string; num?: number } = {}
 ): Promise<SerpSearchResponse> {
-  const apiKey = process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY || process.env.SERPER_API_KEY || process.env.SEARCHAPI_KEY;
+  const apiKey = serpApiKey();
 
-  if (!apiKey || !apiKey.trim()) {
-    const cleanQuery = query.trim();
-    const words = cleanQuery.split(/\s+/);
-    const mainSubject = words.slice(0, 3).join(" ");
-    return {
-      success: true,
-      query: cleanQuery,
-      total_results: 5,
-      results: [
-        {
-          position: 1,
-          title: `Top Rated Solutions for ${mainSubject}`,
-          link: `https://www.industry-leader.com/${encodeURIComponent(cleanQuery.toLowerCase().replace(/\s+/g, "-"))}`,
-          snippet: `Discover top rated insights and strategies regarding ${cleanQuery}. Find expert reviews, pricing, and comparisons.`,
-          source: "industry-leader.com",
-        },
-        {
-          position: 2,
-          title: `Best Services for ${mainSubject} 2026`,
-          link: `https://www.topservices.com/${encodeURIComponent(cleanQuery.toLowerCase().replace(/\s+/g, "-"))}`,
-          snippet: `Leading provider of ${mainSubject} solutions. Trusted by global brands with proven results.`,
-          source: "topservices.com",
-        },
-        {
-          position: 3,
-          title: `${mainSubject} - Official Solutions & Pricing`,
-          link: `https://www.globalprovider.com/services`,
-          snippet: `Explore enterprise solutions for ${cleanQuery}. Request a custom demo today.`,
-          source: "globalprovider.com",
-        },
-        {
-          position: 4,
-          title: `Complete Review of ${mainSubject} Solutions`,
-          link: `https://www.digitaltech-review.org/${encodeURIComponent(cleanQuery.toLowerCase().replace(/\s+/g, "-"))}`,
-          snippet: `An in-depth analysis of ${cleanQuery} key players, features, market presence, and benchmark performance.`,
-          source: "digitaltech-review.org",
-        },
-        {
-          position: 5,
-          title: `How to Choose the Right ${mainSubject}`,
-          link: `https://www.businessinsights.com/guides/${encodeURIComponent(cleanQuery.toLowerCase().replace(/\s+/g, "-"))}`,
-          snippet: `Compare features, capabilities, and ROI across top-ranking ${mainSubject} providers in the market.`,
-          source: "businessinsights.com",
-        },
-      ],
-    };
+  if (!apiKey) {
+    if (demoDataAllowed()) {
+      const results = demoOrganicResults(query.trim()).map((r) => ({
+        position: r.position,
+        title: r.title,
+        link: r.url,
+        snippet: r.snippet ?? "",
+        source: r.domain,
+      }));
+      return { success: true, isDemo: true, query: query.trim(), total_results: results.length, results };
+    }
+    throw new SerpApiError("Live search results aren't available: no search provider is configured (SERPAPI_KEY).", 503, "SEARCH_UNAVAILABLE");
   }
 
   const { engine = "google", gl = "us", hl = "en", num = 10 } = options;

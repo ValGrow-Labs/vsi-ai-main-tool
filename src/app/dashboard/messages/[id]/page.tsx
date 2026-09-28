@@ -263,7 +263,8 @@ export default function MessageDetailsPage() {
           )}
 
           {/* Message Body */}
-          <div className="prose prose-neutral dark:prose-invert max-w-none mb-10 text-ink/90 leading-relaxed relative z-10" dangerouslySetInnerHTML={{ __html: message.body }} />
+          {/* Plain text from the compose textarea: rendered as text, never as HTML. */}
+          <div className="prose prose-neutral dark:prose-invert max-w-none mb-10 text-ink/90 leading-relaxed relative z-10 whitespace-pre-wrap break-words">{message.body}</div>
 
           {/* Attachments */}
           {message.attachments && message.attachments.length > 0 && (

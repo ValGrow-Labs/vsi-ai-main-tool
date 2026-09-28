@@ -1,16 +1,16 @@
 import "server-only";
 import { NextResponse } from "next/server";
-import { getSession, type SessionContext } from "@/lib/auth";
+import { requireSuperAdminApi, type SessionContext } from "@/lib/auth";
 
 /**
- * Super-admin check for admin API routes. Returns the session, or a JSON
- * 401/403 response to send back. Unlike requireSuperAdmin() it never
+ * Super-admin check for admin API routes (a wrapper over requireSuperAdminApi). Returns the
+ * session, or a JSON 401/403 response to send back. Unlike requireSuperAdmin() it never
  * redirects, so fetch callers get a clear answer.
  */
 export async function adminApiSession(): Promise<SessionContext | NextResponse> {
-  const session = await getSession();
-  if (!session) return NextResponse.json({ error: "Sign in again to continue." }, { status: 401 });
-  if (session.role !== "super_admin") return NextResponse.json({ error: "Only platform admins can do this." }, { status: 403 });
+  const session = await requireSuperAdminApi();
+  // Same 401 / 403 (account_disabled, forbidden) answers as every other API, as a NextResponse.
+  if (session instanceof Response) return NextResponse.json(await session.json(), { status: session.status });
   return session;
 }
 

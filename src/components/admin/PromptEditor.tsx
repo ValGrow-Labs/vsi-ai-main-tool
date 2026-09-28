@@ -96,7 +96,7 @@ export default function PromptEditor({
       mentionedInText: "No",
       gapLabel: "geo invisible",
       competitorList: "competitor-a.com, competitor-b.com, competitor-c.com",
-      aioSnippet: "- AIO body excerpt: \"Sample AI Mode response text...\"",
+      aioSnippet: "- AIO body excerpt: \"Sample AI Overview response text...\"",
       sourceCount: "3",
       sourceBlocks: "--- Source 1: Example Page\nURL: https://example.com/article\nWord count: 1200\nExcerpt:\n[truncated content excerpt]\n",
     };

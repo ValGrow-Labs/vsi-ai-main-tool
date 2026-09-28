@@ -1,198 +1,238 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { Message } from "@/lib/types/messages";
+import { randomUUID } from "node:crypto";
+import { requireSessionApi, type SessionContext } from "@/lib/auth";
+import type { Message, MessageFolder, MessagePriority, MessageStatus } from "@/lib/types/messages";
 
 export const dynamic = "force-dynamic";
 
-// Seed data for fallback persistent store
-const defaultMessages: Message[] = [];
+/*
+ * Messages are private to the signed-in user: every read and write is filtered by user_id, and the
+ * sender is always the signed-in user. Nothing here delivers email; "sent" messages are only stored.
+ * There is no in-memory fallback: if the database can't be reached the caller gets an error.
+ *
+ * messages.id is a global primary key, so ids are always generated here (randomUUID) and any id in
+ * a POST body is ignored: a client-chosen id could collide with another user's row and turn the
+ * duplicate-key error into an "this id exists" oracle. Every PATCH / DELETE matches on the signed-in
+ * user's id first, and "not yours" and "doesn't exist" get the exact same 404 (NOT_FOUND below).
+ */
 
-// Fallback in-memory store
-let fallbackMessages: Message[] = [];
+type Row = Record<string, unknown>;
 
-function mapDbRowToMessage(row: any): Message {
+const FOLDERS: MessageFolder[] = ["inbox", "unread", "sent", "drafts", "starred", "archived", "trash", "spam"];
+const STATUSES: MessageStatus[] = ["read", "unread", "draft", "sent"];
+const PRIORITIES: MessagePriority[] = ["high", "normal", "low"];
+
+const NOT_FOUND_BODY = { success: false, error: "Message not found." } as const;
+const MAX_ID_LENGTH = 100;
+
+/** The one answer for a message id that isn't the signed-in user's, whether or not it exists. */
+function notFound() {
+  return NextResponse.json(NOT_FOUND_BODY, { status: 404 });
+}
+
+function dbError(context: string, error: { code?: string; message?: string } | null | undefined) {
+  console.error(`[messages] ${context} failed`, { code: error?.code, message: error?.message });
+  return NextResponse.json({ success: false, error: "Messages couldn't be reached. Please try again." }, { status: 500 });
+}
+
+function asParty(value: unknown): { name: string; email: string } {
+  if (value && typeof value === "object") {
+    const v = value as { name?: unknown; email?: unknown };
+    const email = typeof v.email === "string" ? v.email : "";
+    const name = typeof v.name === "string" && v.name ? v.name : email;
+    return { name, email };
+  }
+  return { name: "", email: "" };
+}
+
+function mapDbRowToMessage(row: Row): Message {
+  const toEmail = typeof row.to_email === "string" ? row.to_email : "";
+  const recipient = row.recipient ? asParty(row.recipient) : { name: toEmail, email: toEmail };
   return {
-    id: row.id,
-    sender: row.sender || { name: "System Admin", email: "admin@searchintel.com" },
-    recipient: row.recipient || { name: row.to_email || "Recipient", email: row.to_email || "recipient@example.com" },
-    cc: row.cc,
-    bcc: row.bcc,
-    subject: row.subject || "",
-    preview: row.preview || "",
-    body: row.body || "",
-    timestamp: row.created_at || row.timestamp || new Date().toISOString(),
-    updatedAt: row.updated_at || row.updatedAt || new Date().toISOString(),
-    lastSaved: row.last_saved || row.lastSaved || new Date().toISOString(),
-    status: row.status || "unread",
-    priority: row.priority || "normal",
-    folder: row.folder || "inbox",
-    isStarred: row.is_starred ?? row.isStarred ?? false,
-    labels: row.labels || [],
-    relatedClient: row.related_client,
-    aiSummary: row.ai_summary,
-    attachments: row.attachments || [],
+    id: String(row.id),
+    sender: asParty(row.sender),
+    recipient,
+    cc: (row.cc as string | null) ?? undefined,
+    bcc: (row.bcc as string | null) ?? undefined,
+    subject: (row.subject as string) || "",
+    preview: (row.preview as string) || "",
+    body: (row.body as string) || "",
+    timestamp: (row.created_at as string) || "",
+    updatedAt: (row.updated_at as string) || undefined,
+    lastSaved: (row.last_saved as string) || undefined,
+    status: (row.status as MessageStatus) || "unread",
+    priority: (row.priority as MessagePriority) || "normal",
+    folder: (row.folder as MessageFolder) || "inbox",
+    isStarred: Boolean(row.is_starred),
+    labels: (row.labels as string[]) || [],
+    relatedClient: (row.related_client as string | null) ?? undefined,
+    aiSummary: (row.ai_summary as string | null) ?? undefined,
+    attachments: (row.attachments as Message["attachments"]) || [],
   };
 }
 
-// GET /api/messages
+function previewOf(body: string): string {
+  return body.replace(/<[^>]+>/g, "").trim().substring(0, 90);
+}
+
+/** The signed-in user as a message sender. Never a made-up address. */
+function senderFor(session: Pick<SessionContext, "email" | "fullName">): { name: string; email: string } {
+  return { name: session.fullName || session.email, email: session.email };
+}
+
+function recipientFrom(body: Row): { name: string; email: string } {
+  if (body.recipient && typeof body.recipient === "object") return asParty(body.recipient);
+  const to = typeof body.to === "string" ? body.to.trim() : typeof body.recipientEmail === "string" ? body.recipientEmail.trim() : "";
+  return { name: to, email: to };
+}
+
+function pick<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
+}
+
+// GET /api/messages — only the signed-in user's messages
 export async function GET() {
+  const session = await requireSessionApi();
+  if (session instanceof Response) return session;
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase.from("messages").select("*").order("created_at", { ascending: false });
-
-    if (!error && data && data.length > 0) {
-      const mapped = data.map(mapDbRowToMessage);
-      return NextResponse.json({ success: true, messages: mapped });
-    }
-  } catch {}
-
-  return NextResponse.json({ success: true, messages: fallbackMessages });
+    const { data, error } = await supabase
+      .from("messages")
+      .select("*")
+      .eq("user_id", session.userId)
+      .order("created_at", { ascending: false });
+    if (error) return dbError("list", error);
+    return NextResponse.json({ success: true, messages: (data ?? []).map((r: Row) => mapDbRowToMessage(r)) });
+  } catch (e) {
+    return dbError("list", { message: e instanceof Error ? e.message : String(e) });
+  }
 }
 
-// POST /api/messages (Create message or draft)
+// POST /api/messages — store a new message or draft for the signed-in user
 export async function POST(req: NextRequest) {
+  const session = await requireSessionApi();
+  if (session instanceof Response) return session;
+
+  let body: Row;
   try {
-    const body = await req.json();
-    const now = new Date().toISOString();
+    body = (await req.json()) as Row;
+  } catch {
+    return NextResponse.json({ success: false, error: "Invalid request." }, { status: 400 });
+  }
 
-    const plainText = (body.body || "").replace(/<[^>]+>/g, '').trim();
-    const newMsg: Message = {
-      id: body.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-      sender: body.sender || { name: "Me (Admin)", email: "admin@searchintel.com" },
-      recipient: body.recipient || { name: body.to || body.recipientEmail || "Recipient", email: body.to || body.recipientEmail || "recipient@example.com" },
-      cc: body.cc || "",
-      bcc: body.bcc || "",
-      subject: body.subject || "(No Subject)",
-      preview: plainText.substring(0, 90) || "(No content)",
-      body: body.body || "",
-      timestamp: body.timestamp || now,
-      updatedAt: now,
-      lastSaved: now,
-      status: body.status || (body.folder === "drafts" ? "draft" : "unread"),
-      priority: body.priority || "normal",
-      folder: body.folder || "inbox",
-      isStarred: body.isStarred || false,
-      labels: body.labels || [],
-      attachments: body.attachments || [],
-    };
+  const now = new Date().toISOString();
+  const text = typeof body.body === "string" ? body.body : "";
+  const folder = pick(body.folder, FOLDERS, "drafts");
+  const recipient = recipientFrom(body);
+  // Always a fresh server id; body.id is ignored (see the note at the top).
+  const id = randomUUID();
 
-    // Try Supabase insert
-    try {
-      const supabase = await createClient();
-      await supabase.from("messages").insert({
-        id: newMsg.id,
-        sender: newMsg.sender,
-        recipient: newMsg.recipient,
-        to_email: typeof newMsg.recipient === "string" ? newMsg.recipient : newMsg.recipient.email,
-        cc: newMsg.cc,
-        bcc: newMsg.bcc,
-        subject: newMsg.subject,
-        preview: newMsg.preview,
-        body: newMsg.body,
-        attachments: newMsg.attachments,
-        status: newMsg.status,
-        priority: newMsg.priority,
-        folder: newMsg.folder,
-        is_starred: newMsg.isStarred,
-        labels: newMsg.labels,
-        last_saved: newMsg.lastSaved,
-        updated_at: newMsg.updatedAt,
-      });
-    } catch {}
+  const row = {
+    id,
+    user_id: session.userId,
+    sender: senderFor(session),
+    recipient,
+    to_email: recipient.email || null,
+    cc: typeof body.cc === "string" ? body.cc : "",
+    bcc: typeof body.bcc === "string" ? body.bcc : "",
+    subject: (typeof body.subject === "string" && body.subject) || "(No Subject)",
+    preview: previewOf(text) || "(No content)",
+    body: text,
+    attachments: Array.isArray(body.attachments) ? body.attachments : [],
+    status: pick(body.status, STATUSES, folder === "drafts" ? "draft" : "read"),
+    priority: pick(body.priority, PRIORITIES, "normal"),
+    folder,
+    is_starred: body.isStarred === true,
+    labels: Array.isArray(body.labels) ? body.labels.filter((l): l is string => typeof l === "string") : [],
+    last_saved: now,
+    updated_at: now,
+  };
 
-    // Update fallback store
-    fallbackMessages = [newMsg, ...fallbackMessages.filter(m => m.id !== newMsg.id)];
-
-    return NextResponse.json({ success: true, message: newMsg }, { status: 201 });
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase.from("messages").insert(row).select("*").single();
+    if (error || !data) return dbError("insert", error);
+    return NextResponse.json({ success: true, message: mapDbRowToMessage(data as Row) }, { status: 201 });
   } catch (e) {
-    return NextResponse.json({ success: false, error: e instanceof Error ? e.message : "Failed to create message" }, { status: 500 });
+    return dbError("insert", { message: e instanceof Error ? e.message : String(e) });
   }
 }
 
-// PATCH /api/messages (Update message / auto-save draft / folder change / star)
+// PATCH /api/messages — update one of the signed-in user's messages
 export async function PATCH(req: NextRequest) {
+  const session = await requireSessionApi();
+  if (session instanceof Response) return session;
+
+  let body: Row;
   try {
-    const body = await req.json();
-    const { id, ...updates } = body;
+    body = (await req.json()) as Row;
+  } catch {
+    return NextResponse.json({ success: false, error: "Invalid request." }, { status: 400 });
+  }
+  const id = typeof body.id === "string" ? body.id : "";
+  if (!id) return NextResponse.json({ success: false, error: "Message ID is required" }, { status: 400 });
+  if (id.length > MAX_ID_LENGTH) return notFound();
 
-    if (!id) {
-      return NextResponse.json({ success: false, error: "Message ID is required" }, { status: 400 });
-    }
+  const now = new Date().toISOString();
+  const dbUpdates: Row = { updated_at: now, last_saved: now };
+  if (typeof body.subject === "string") dbUpdates.subject = body.subject;
+  if (typeof body.body === "string") {
+    dbUpdates.body = body.body;
+    dbUpdates.preview = previewOf(body.body) || "(No content)";
+  }
+  if (body.to !== undefined || body.recipient !== undefined) {
+    const recipient = recipientFrom(body);
+    dbUpdates.recipient = recipient;
+    dbUpdates.to_email = recipient.email || null;
+  }
+  if (typeof body.cc === "string") dbUpdates.cc = body.cc;
+  if (typeof body.bcc === "string") dbUpdates.bcc = body.bcc;
+  if (body.folder !== undefined) dbUpdates.folder = pick(body.folder, FOLDERS, "inbox");
+  if (body.status !== undefined) dbUpdates.status = pick(body.status, STATUSES, "read");
+  if (body.priority !== undefined) dbUpdates.priority = pick(body.priority, PRIORITIES, "normal");
+  if (typeof body.isStarred === "boolean") dbUpdates.is_starred = body.isStarred;
+  if (Array.isArray(body.labels)) dbUpdates.labels = body.labels.filter((l): l is string => typeof l === "string");
+  if (Array.isArray(body.attachments)) dbUpdates.attachments = body.attachments;
+  // The sender and owner can never be changed.
 
-    const now = new Date().toISOString();
-    const patchData: Record<string, any> = { updatedAt: now };
-
-    if (updates.subject !== undefined) patchData.subject = updates.subject;
-    if (updates.body !== undefined) {
-      patchData.body = updates.body;
-      const plainText = updates.body.replace(/<[^>]+>/g, '').trim();
-      patchData.preview = plainText.substring(0, 90) || "(No content)";
-    }
-    if (updates.to !== undefined || updates.recipient !== undefined) {
-      patchData.recipient = typeof updates.recipient === "object" ? updates.recipient : { name: updates.to || "Recipient", email: updates.to || "recipient@example.com" };
-    }
-    if (updates.cc !== undefined) patchData.cc = updates.cc;
-    if (updates.bcc !== undefined) patchData.bcc = updates.bcc;
-    if (updates.folder !== undefined) patchData.folder = updates.folder;
-    if (updates.status !== undefined) patchData.status = updates.status;
-    if (updates.priority !== undefined) patchData.priority = updates.priority;
-    if (updates.isStarred !== undefined) patchData.isStarred = updates.isStarred;
-    if (updates.labels !== undefined) patchData.labels = updates.labels;
-    if (updates.attachments !== undefined) patchData.attachments = updates.attachments;
-    patchData.lastSaved = now;
-
-    // Try Supabase update
-    try {
-      const supabase = await createClient();
-      const dbUpdates: Record<string, any> = { updated_at: now, last_saved: now };
-      if (patchData.subject !== undefined) dbUpdates.subject = patchData.subject;
-      if (patchData.body !== undefined) dbUpdates.body = patchData.body;
-      if (patchData.preview !== undefined) dbUpdates.preview = patchData.preview;
-      if (patchData.recipient !== undefined) {
-        dbUpdates.recipient = patchData.recipient;
-        dbUpdates.to_email = patchData.recipient.email;
-      }
-      if (patchData.cc !== undefined) dbUpdates.cc = patchData.cc;
-      if (patchData.bcc !== undefined) dbUpdates.bcc = patchData.bcc;
-      if (patchData.folder !== undefined) dbUpdates.folder = patchData.folder;
-      if (patchData.status !== undefined) dbUpdates.status = patchData.status;
-      if (patchData.priority !== undefined) dbUpdates.priority = patchData.priority;
-      if (patchData.isStarred !== undefined) dbUpdates.is_starred = patchData.isStarred;
-      if (patchData.labels !== undefined) dbUpdates.labels = patchData.labels;
-      if (patchData.attachments !== undefined) dbUpdates.attachments = patchData.attachments;
-
-      await supabase.from("messages").update(dbUpdates).eq("id", id);
-    } catch {}
-
-    // Update in fallback store
-    fallbackMessages = fallbackMessages.map(m => m.id === id ? { ...m, ...patchData } : m);
-    const updatedMsg = fallbackMessages.find(m => m.id === id);
-
-    return NextResponse.json({ success: true, message: updatedMsg || patchData });
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("messages")
+      .update(dbUpdates)
+      .eq("user_id", session.userId)
+      .eq("id", id)
+      .select("*");
+    if (error) return dbError("update", error);
+    if (!data || data.length === 0) return notFound();
+    return NextResponse.json({ success: true, message: mapDbRowToMessage(data[0] as Row) });
   } catch (e) {
-    return NextResponse.json({ success: false, error: e instanceof Error ? e.message : "Failed to update message" }, { status: 500 });
+    return dbError("update", { message: e instanceof Error ? e.message : String(e) });
   }
 }
 
-// DELETE /api/messages (Delete message or draft)
+// DELETE /api/messages?id=… — delete one of the signed-in user's messages
 export async function DELETE(req: NextRequest) {
+  const session = await requireSessionApi();
+  if (session instanceof Response) return session;
+
+  const id = new URL(req.url).searchParams.get("id");
+  if (!id) return NextResponse.json({ success: false, error: "Missing message ID" }, { status: 400 });
+  if (id.length > MAX_ID_LENGTH) return notFound();
+
   try {
-    const { searchParams } = new URL(req.url);
-    const id = searchParams.get("id");
-
-    if (!id) {
-      return NextResponse.json({ success: false, error: "Missing message ID" }, { status: 400 });
-    }
-
-    try {
-      const supabase = await createClient();
-      await supabase.from("messages").delete().eq("id", id);
-    } catch {}
-
-    fallbackMessages = fallbackMessages.filter(m => m.id !== id);
-
-    return NextResponse.json({ success: true, message: "Message deleted successfully" });
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("messages")
+      .delete()
+      .eq("user_id", session.userId)
+      .eq("id", id)
+      .select("id");
+    if (error) return dbError("delete", error);
+    if (!data || data.length === 0) return notFound();
+    return NextResponse.json({ success: true, message: "Message deleted." });
   } catch (e) {
-    return NextResponse.json({ success: false, error: e instanceof Error ? e.message : "Failed to delete message" }, { status: 500 });
+    return dbError("delete", { message: e instanceof Error ? e.message : String(e) });
   }
 }

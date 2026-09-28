@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireAgency } from "@/lib/auth";
+import { requireAgencyApi, apiServerError } from "@/lib/auth";
+import { UUID_PATTERN } from "@/lib/project-types";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ snapshotId: string }> }) {
+ const session = await requireAgencyApi();
+ if (session instanceof Response) return session;
  try {
  const { snapshotId } = await ctx.params;
- const session = await requireAgency();
+ if (!UUID_PATTERN.test(snapshotId)) return NextResponse.json({ error: "Snapshot not found" }, { status: 404 });
  const supabase = await createClient();
  let q = supabase
  .from("search_results")
@@ -15,7 +18,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ snapshotId
  .eq("id", snapshotId);
  if (session.role !== "super_admin") q = q.eq("agency_id", session.agencyId);
  const { data, error } = await q.maybeSingle();
- if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+ if (error) return apiServerError("citation-strategy/[snapshotId]/status", error);
  if (!data) return NextResponse.json({ error: "Snapshot not found" }, { status: 404 });
 
  return NextResponse.json({
@@ -27,6 +30,6 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ snapshotId
  generated_at: data.citation_strategy_at,
  });
  } catch (e) {
- return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
+ return apiServerError("citation-strategy/[snapshotId]/status", e);
  }
 }

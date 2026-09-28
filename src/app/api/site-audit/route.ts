@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireAgency } from "@/lib/auth";
+import { requireAgencyApi } from "@/lib/auth";
 import { UUID_PATTERN } from "@/lib/project-types";
 import { runSiteAudit, SiteAuditError } from "@/lib/site-audit/run";
-import { isMissingTableError } from "@/lib/site-audit/store";
+import { auditRowUpdate, isMissingTableError } from "@/lib/site-audit/store";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -17,7 +17,8 @@ function error(status: number, code: string, message: string) {
 
 /** Start a site audit for a project. Returns immediately; the audit runs in the background. */
 export async function POST(req: NextRequest) {
-  const session = await requireAgency();
+  const session = await requireAgencyApi();
+  if (session instanceof Response) return session;
 
   let clientId: unknown;
   try {
@@ -86,28 +87,33 @@ export async function POST(req: NextRequest) {
 
   after(async () => {
     const supa = await createClient();
+    let update: Record<string, unknown>;
     try {
       const outcome = await runSiteAudit(website, seoSetup);
-
-      await supa
-        .from("site_audits")
-        .update({
-          status: "completed",
-          domain: outcome.domain,
-          score: outcome.score,
-          pages_scanned: outcome.pages.length,
-          checks: outcome.checks,
-          pages: outcome.pages.map(({ internalLinks, ...rest }) => ({ ...rest, linkCount: internalLinks.length })),
-          completed_at: new Date().toISOString(),
-        })
-        .eq("id", auditId);
+      // Failed audits (no page loaded) are stored as "failed" with the reason, never with a score.
+      update = auditRowUpdate(outcome);
     } catch (e) {
       const message = e instanceof SiteAuditError ? e.message : "The audit couldn't finish. Please try again.";
       if (!(e instanceof SiteAuditError)) console.error("[site-audit] run failed", e);
-      await supa
-        .from("site_audits")
-        .update({ status: "failed", error_message: message, completed_at: new Date().toISOString() })
-        .eq("id", auditId);
+      update = { status: "failed", error_message: message, score: null, completed_at: new Date().toISOString() };
+    }
+
+    const { error: saveError } = await supa.from("site_audits").update(update).eq("id", auditId);
+    if (!saveError) return;
+
+    // The result couldn't be saved. Retry once with the smallest possible
+    // failed-state update so the row never stays "running" forever.
+    console.error("[site-audit] could not save result", { auditId, code: saveError.code, message: saveError.message });
+    const { error: retryError } = await supa
+      .from("site_audits")
+      .update({
+        status: "failed",
+        error_message: "The audit finished but its results couldn't be saved. Please run it again.",
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", auditId);
+    if (retryError) {
+      console.error("[site-audit] could not mark run as failed", { auditId, code: retryError.code, message: retryError.message });
     }
   });
 

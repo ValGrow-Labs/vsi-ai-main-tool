@@ -58,8 +58,9 @@ export type WorkspaceResult =
   | { status: "unavailable"; message: string }
   | { status: "error"; message: string };
 
-const UNAVAILABLE_MESSAGE =
-  "Database setup incomplete. The required RPC function (create_own_organization / complete_onboarding) is missing from your Supabase database. Please run Supabase migration 039_self_service_workspace.sql in your Supabase SQL Editor.";
+// Shown to the person signing up: no function, migration or database names (those are for operators).
+const UNAVAILABLE_MESSAGE = "Database setup incomplete: workspaces can't be created yet. Please contact support.";
+const GENERIC_FAILURE = "Account setup failed. Please try again.";
 
 type RpcError = { message?: string; code?: string };
 
@@ -87,7 +88,8 @@ function describeError(error: RpcError): WorkspaceResult {
   if (error.code === "23505" || /duplicate key|unique constraint|slug is already in use|address is already in use/i.test(msg)) {
     return { status: "error", message: "Could not create the organization. Organization name or address is already in use. Try a different name." };
   }
-  return { status: "error", message: msg || "Account setup failed. Please try again." };
+  // Anything unrecognised is database text (SQL, constraint names, internals): never shown.
+  return { status: "error", message: GENERIC_FAILURE };
 }
 
 const isSlugClash = (error: RpcError) => error.code === "23505" || /slug is already in use|address is already in use/i.test(error.message ?? "");
@@ -104,7 +106,7 @@ export async function createWorkspace(client: WorkspaceClient, input: { name: st
     try {
       res = await client.rpc("complete_onboarding", { p_code: code, p_agency_name: name, p_slug: slugify(name) });
     } catch {
-      return { status: "error", message: "Account setup failed. Please try again." };
+      return { status: "error", message: GENERIC_FAILURE };
     }
     if (!res.error) return { status: "created", path: "invite" };
     return describeError(res.error);
@@ -115,7 +117,7 @@ export async function createWorkspace(client: WorkspaceClient, input: { name: st
     try {
       res = await client.rpc("create_own_organization", { p_agency_name: name, p_slug: selfServiceSlug(name) });
     } catch {
-      return { status: "error", message: "Account setup failed. Please try again." };
+      return { status: "error", message: GENERIC_FAILURE };
     }
     if (!res.error) return { status: "created", path: "self_service" };
 

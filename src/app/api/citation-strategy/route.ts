@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireAgency } from "@/lib/auth";
+import { requireAgencyApi, apiServerError } from "@/lib/auth";
+import { UUID_PATTERN } from "@/lib/project-types";
 import { runCitationStrategy } from "@/lib/citation-strategy";
 import type { AIOCitation } from "@/types/search";
 
@@ -8,13 +9,14 @@ export const maxDuration = 180;
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
+ const session = await requireAgencyApi();
+ if (session instanceof Response) return session;
  try {
  const { snapshot_id } = (await req.json()) as { snapshot_id?: string };
- if (!snapshot_id) {
+ if (!snapshot_id || typeof snapshot_id !== "string" || !UUID_PATTERN.test(snapshot_id)) {
  return NextResponse.json({ error: "snapshot_id required" }, { status: 400 });
  }
 
- const session = await requireAgency();
  const supabase = await createClient();
  const isSuperAdmin = session.role === "super_admin";
 
@@ -116,7 +118,8 @@ export async function POST(req: NextRequest) {
  .from("search_results")
  .update({
  citation_strategy_status: "failed",
- citation_strategy_error: e instanceof Error ? e.message : "Unknown error",
+ // The raw error stays in the server log; the status API shows this text to the browser.
+ citation_strategy_error: "Strategy generation failed",
  })
  .eq("id", snapshot_id);
  }
@@ -124,9 +127,6 @@ export async function POST(req: NextRequest) {
 
  return NextResponse.json({ status: "pending", snapshot_id }, { status: 202 });
  } catch (err) {
- return NextResponse.json(
- { error: err instanceof Error ? err.message : "Failed" },
- { status: 500 }
- );
+ return apiServerError("citation-strategy", err);
  }
 }

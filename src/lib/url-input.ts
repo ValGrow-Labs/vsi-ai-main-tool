@@ -47,3 +47,17 @@ export function normaliseDomain(input: string): NormalisedDomain | null {
 export function isValidDomain(input: string): boolean {
   return normaliseDomain(input) !== null;
 }
+
+/**
+ * True when `host` (a hostname or URL) is the site `domain` or one of its
+ * subdomains. Exact label matching only: "notexample.com", "example.com.evil.io"
+ * and empty hosts never match "example.com".
+ */
+export function hostMatchesDomain(host: string, domain: string): boolean {
+  const clean = (s: string) =>
+    (s || "").trim().toLowerCase().replace(/^[a-z]+:\/+/, "").replace(/^www\./, "").split(/[/?#]/)[0].replace(/:\d+$/, "").replace(/\.$/, "");
+  const h = clean(host);
+  const d = clean(domain);
+  if (!h || !d || !d.includes(".")) return false;
+  return h === d || h.endsWith(`.${d}`);
+}

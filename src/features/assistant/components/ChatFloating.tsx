@@ -484,7 +484,7 @@ export default function ChatFloating() {
                         Ready to assist
                       </p>
                       <p className="text-ink-3 leading-relaxed text-[12px]">
-                        I analyze live SERP data, AI mode citations, keyword opportunities, and dashboard metrics for{" "}
+                        I analyze live SERP data, AI Overview citations, keyword opportunities, and dashboard metrics for{" "}
                         <strong className="text-ink">{label}</strong>.
                       </p>
                     </div>

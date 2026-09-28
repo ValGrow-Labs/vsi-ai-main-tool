@@ -7,13 +7,15 @@ import { Eyebrow, PageContainer, PageHeader, Section } from "@/components/ui/Pag
 import { Notice } from "@/components/ui/Status";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import { createClient } from "@/lib/supabase/client";
+import { changedAgencySettings, type AgencySettingsResponse } from "@/lib/agency-settings";
 
-/* ─── Storage keys ──────────────────────────────────────────────────── */
+/* ─── Local-development storage (only used when there is no database) ─── */
 const LOGO_LS_KEY = "searchintel_agency_logo";
 const NAME_LS_KEY = "searchintel_agency_name";
 const EMAIL_LS_KEY = "searchintel_agency_email";
 
-/* Cookie names (readable server-side by dynamicSession in auth.ts) */
+/* Cookie names (readable server-side by dynamicSession in auth.ts, local development only) */
 const COOKIE_DISPLAY_NAME = "vsi_agency_display_name";
 const COOKIE_EMAIL = "vsi_agency_email";
 const COOKIE_LOGO_MARKER = "vsi_agency_logo_marker";
@@ -51,35 +53,91 @@ function compressImage(dataUrl: string, maxDim = 400, quality = 0.75): Promise<s
   });
 }
 
+/** Uploads a picked logo (data URL) to the organization's folder in the agency-logos bucket. */
+async function uploadLogo(agencyId: string, dataUrl: string): Promise<string> {
+  const blob = await (await fetch(dataUrl)).blob();
+  const ext = blob.type === "image/svg+xml" ? "svg" : blob.type === "image/png" ? "png" : blob.type === "image/webp" ? "webp" : "jpg";
+  const path = `${agencyId}/logo-${Date.now()}.${ext}`;
+  const supabase = createClient();
+  const { error } = await supabase.storage.from("agency-logos").upload(path, blob, { contentType: blob.type, upsert: true });
+  if (error) throw new Error(`The logo couldn't be uploaded: ${error.message}`);
+  return supabase.storage.from("agency-logos").getPublicUrl(path).data.publicUrl;
+}
+
+type Loaded = { displayName: string; contactEmail: string; logoUrl: string | null };
+
 export default function SettingsPage() {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
-  /* Agency Profile state */
-  const [agencyName, setAgencyName] = useState("ValGrow Intelligence");
-  const [contactEmail, setContactEmail] = useState("agency@valgrow.com");
+  /* What the organization really has stored (the Reset target). */
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [mode, setMode] = useState<AgencySettingsResponse["mode"] | null>(null);
+  const [canEdit, setCanEdit] = useState(false);
+  const [agencyId, setAgencyId] = useState<string | null>(null);
+  const [legalName, setLegalName] = useState<string | null>(null);
+
+  /* Agency Profile form state */
+  const [agencyName, setAgencyName] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  /** Logo shown in the form: the stored URL, a newly picked data URL, or null. */
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
 
   /* UI feedback state */
   const [logoError, setLogoError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  /* ── Hydrate from localStorage + cookies on mount ─────────────────── */
+  /* ── Load the organization's real settings ────────────────────────── */
   useEffect(() => {
-    try {
-      const storedLogo = localStorage.getItem(LOGO_LS_KEY);
-      const storedName = localStorage.getItem(NAME_LS_KEY);
-      const storedEmail = localStorage.getItem(EMAIL_LS_KEY);
-      if (storedLogo) setLogoDataUrl(storedLogo);
-      if (storedName) setAgencyName(storedName);
-      if (storedEmail) setContactEmail(storedEmail);
-    } catch {
-      /* ignore */
-    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/agency/settings", { cache: "no-store" });
+        const data = (await res.json().catch(() => ({}))) as Partial<AgencySettingsResponse> & { error?: string };
+        if (!res.ok || !data.ok || !data.organization) {
+          throw new Error(data.error || "Couldn't load your organization's settings.");
+        }
+        if (cancelled) return;
+        const org = data.organization;
+        let logo = org.logo_url;
+        if (data.mode === "local") {
+          // Local development: the logo only ever lived in this browser.
+          try {
+            logo = localStorage.getItem(LOGO_LS_KEY);
+          } catch {
+            /* ignore */
+          }
+        } else {
+          // Values once kept in this browser were never the organization's; drop them.
+          try {
+            localStorage.removeItem(LOGO_LS_KEY);
+            localStorage.removeItem(NAME_LS_KEY);
+            localStorage.removeItem(EMAIL_LS_KEY);
+          } catch {
+            /* ignore */
+          }
+        }
+        const next: Loaded = { displayName: org.display_name ?? "", contactEmail: org.support_email ?? "", logoUrl: logo };
+        setMode(data.mode ?? null);
+        setCanEdit(!!data.canEdit);
+        setAgencyId(org.id);
+        setLegalName(org.name);
+        setLoaded(next);
+        setAgencyName(next.displayName);
+        setContactEmail(next.contactEmail);
+        setLogoDataUrl(next.logoUrl);
+      } catch (err) {
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : "Couldn't load your organization's settings.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   /* ── File pick & validate ─────────────────────────────────────────── */
@@ -114,97 +172,104 @@ export default function SettingsPage() {
     setLogoError(null);
   };
 
+  /** Back to what is stored, not to made-up defaults. */
   const handleReset = () => {
-    setAgencyName("ValGrow Intelligence");
-    setContactEmail("agency@valgrow.com");
-    setLogoDataUrl(null);
+    setAgencyName(loaded?.displayName ?? "");
+    setContactEmail(loaded?.contactEmail ?? "");
+    setLogoDataUrl(loaded?.logoUrl ?? null);
     setLogoError(null);
     setSaveError(null);
   };
 
-  /* ── Save Preferences ─────────────────────────────────────────────── */
+  /* ── Save ─────────────────────────────────────────────────────────── */
+  const saveLocally = () => {
+    try {
+      if (logoDataUrl) localStorage.setItem(LOGO_LS_KEY, logoDataUrl);
+      else localStorage.removeItem(LOGO_LS_KEY);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      throw new Error(
+        msg.toLowerCase().includes("quota")
+          ? "Logo is too large to save locally. Try a smaller image (under 500 KB)."
+          : "Failed to save preferences. Please try again.",
+      );
+    }
+    if (agencyName.trim()) setCookie(COOKIE_DISPLAY_NAME, agencyName.trim());
+    else deleteCookie(COOKIE_DISPLAY_NAME);
+    if (contactEmail.trim()) setCookie(COOKIE_EMAIL, contactEmail.trim());
+    else deleteCookie(COOKIE_EMAIL);
+    if (logoDataUrl) setCookie(COOKIE_LOGO_MARKER, "__local__");
+    else deleteCookie(COOKIE_LOGO_MARKER);
+    window.dispatchEvent(new Event("storage"));
+  };
+
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (saving) return;
+    if (saving || !loaded) return;
 
     setSaving(true);
     setSaveError(null);
-    setSaved(false);
+    setSaved(null);
 
     try {
-      if (logoDataUrl) {
-        localStorage.setItem(LOGO_LS_KEY, logoDataUrl);
+      if (mode === "local") {
+        saveLocally();
+        setLoaded({ displayName: agencyName.trim(), contactEmail: contactEmail.trim(), logoUrl: logoDataUrl });
+        setSaved("Saved in this browser only. Local development has no database, so nobody else sees these settings.");
       } else {
-        localStorage.removeItem(LOGO_LS_KEY);
-      }
-      localStorage.setItem(NAME_LS_KEY, agencyName);
-      localStorage.setItem(EMAIL_LS_KEY, contactEmail);
+        if (!canEdit || !agencyId) throw new Error("Your account can't change organization settings.");
 
-      if (agencyName.trim()) {
-        setCookie(COOKIE_DISPLAY_NAME, agencyName.trim());
-      } else {
-        deleteCookie(COOKIE_DISPLAY_NAME);
-      }
-      if (contactEmail.trim()) {
-        setCookie(COOKIE_EMAIL, contactEmail.trim());
-      } else {
-        deleteCookie(COOKIE_EMAIL);
-      }
-      if (logoDataUrl) {
-        setCookie(COOKIE_LOGO_MARKER, "__local__");
-      } else {
-        deleteCookie(COOKIE_LOGO_MARKER);
-      }
+        // A newly picked logo is a data URL: upload it first, then store its URL.
+        let logoUrl = logoDataUrl;
+        if (logoDataUrl && logoDataUrl.startsWith("data:")) {
+          logoUrl = await uploadLogo(agencyId, logoDataUrl);
+        }
 
-      window.dispatchEvent(new Event("storage"));
+        const changes = changedAgencySettings(
+          { display_name: loaded.displayName, support_email: loaded.contactEmail, logo_url: loaded.logoUrl },
+          { display_name: agencyName, support_email: contactEmail, logo_url: logoUrl },
+        );
+        if (Object.keys(changes).length === 0) {
+          setSaved("There were no changes to save.");
+          return;
+        }
 
-      try {
         const res = await fetch("/api/agency/settings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            display_name: agencyName.trim() || null,
-            support_email: contactEmail.trim() || null,
-            logo_url: null,
-          }),
+          body: JSON.stringify(changes),
         });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          if (data?.error && !data.error.includes("dummy") && !data.error.includes("Failed to fetch")) {
-            console.warn("Agency settings API:", data.error);
-          }
+        const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || "Your settings weren't saved. Please try again.");
         }
-      } catch {
-        // graceful fallthrough
+
+        setLoaded({ displayName: agencyName.trim(), contactEmail: contactEmail.trim(), logoUrl });
+        setLogoDataUrl(logoUrl);
+        setSaved("Your changes now apply across your workspace.");
       }
 
       startTransition(() => {
         router.refresh();
       });
-
-      setSaved(true);
-      setTimeout(() => setSaved(false), 4000);
+      setTimeout(() => setSaved(null), 4000);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Save failed";
-      if (msg.toLowerCase().includes("quota")) {
-        setSaveError("Logo is too large to save locally. Try a smaller image (under 500 KB).");
-      } else {
-        setSaveError("Failed to save preferences. Please try again.");
-      }
+      setSaveError(err instanceof Error ? err.message : "Your settings weren't saved. Please try again.");
     } finally {
       setSaving(false);
     }
   };
 
-  const isBusy = saving || isPending;
+  const readOnly = !loaded || (mode === "database" && !canEdit);
+  const isBusy = saving || isPending || readOnly;
 
   // Extract initials for preview
-  const initials = agencyName
+  const initials = (agencyName || legalName || "")
     .split(" ")
     .map((w) => w[0])
     .join("")
     .slice(0, 2)
-    .toUpperCase() || "VI";
+    .toUpperCase();
 
   const field =
     "h-10 w-full rounded-control border border-line-strong bg-surface px-3 text-body text-ink placeholder:text-ink-3 focus:border-brand focus:outline-none disabled:opacity-60";
@@ -219,10 +284,20 @@ export default function SettingsPage() {
 
       {saved && (
         <Notice tone="positive" title="Settings saved">
-          Your changes now apply across your workspace.
+          {saved}
         </Notice>
       )}
       {saveError && <Notice tone="critical" title={saveError} />}
+      {loadError && (
+        <Notice tone="critical" title="Your organization's settings couldn't be loaded">
+          {loadError} Nothing can be saved until they load.
+        </Notice>
+      )}
+      {loaded && mode === "database" && !canEdit && (
+        <Notice tone="info" title="You can view these settings, but not change them">
+          Only a platform admin can update your organization&apos;s name, contact email and logo.
+        </Notice>
+      )}
 
       <form onSubmit={handleSaveSettings} className="space-y-10">
         <Section title="Organization" description="Shown across your workspace, in reports and in messages to clients.">
@@ -239,12 +314,11 @@ export default function SettingsPage() {
                 <input
                   id="org-name"
                   type="text"
-                  required
                   value={agencyName}
                   onChange={(e) => setAgencyName(e.target.value)}
                   disabled={isBusy}
                   className={field}
-                  placeholder="For example: ValGrow Intelligence"
+                  placeholder={legalName ?? "Your organization's name"}
                 />
               </div>
 
@@ -259,15 +333,13 @@ export default function SettingsPage() {
                 <input
                   id="org-email"
                   type="email"
-                  required
                   value={contactEmail}
                   onChange={(e) => setContactEmail(e.target.value)}
                   disabled={isBusy}
                   className={field}
-                  placeholder="For example: hello@yourcompany.com"
+                  placeholder="Not set"
                 />
               </div>
-
               {/* Logo */}
               <div className="grid gap-x-8 gap-y-3 pt-6 sm:grid-cols-[12rem_minmax(0,1fr)]">
                 <div>
@@ -335,8 +407,8 @@ export default function SettingsPage() {
                   </div>
                 )}
                 <div className="min-w-0">
-                  <p className="truncate text-body font-semibold text-ink">{agencyName || "Your organization"}</p>
-                  <p className="mt-0.5 truncate text-support text-ink-3">{contactEmail || "Contact email"}</p>
+                  <p className="truncate text-body font-semibold text-ink">{agencyName || legalName || "Your organization"}</p>
+                  <p className="mt-0.5 truncate text-support text-ink-3">{contactEmail || "No contact email set"}</p>
                 </div>
               </div>
             </figure>
@@ -345,8 +417,8 @@ export default function SettingsPage() {
 
         <div className="flex flex-wrap items-center gap-3 border-t border-line pt-6">
           <Button type="submit" variant="primary" disabled={isBusy}>
-            {isBusy ? <Loader2 size={15} className="animate-spin" aria-hidden /> : <Save size={15} strokeWidth={1.75} aria-hidden />}
-            {isBusy ? "Saving" : "Save changes"}
+            {saving || isPending ? <Loader2 size={15} className="animate-spin" aria-hidden /> : <Save size={15} strokeWidth={1.75} aria-hidden />}
+            {saving || isPending ? "Saving" : !loaded && !loadError ? "Loading" : "Save changes"}
           </Button>
           <Button type="button" onClick={handleReset} disabled={isBusy}>
             Reset

@@ -8,7 +8,7 @@ import {
   CheckCircle2, AlertCircle,
 } from "lucide-react";
 import { useTheme } from "@/components/ThemeProvider";
-import { checkSupabaseConfig, classifyFeedbackError } from "@/lib/feedback";
+import { classifyFeedbackError, submitFeedback } from "@/lib/feedback";
 
 interface EmojiOption {
   emoji: string;
@@ -249,107 +249,25 @@ export default function FeedbackModal({ open, onClose }: FeedbackModalProps) {
         return "Other";
       })();
 
-      let attachmentName: string | null = null;
-      let attachmentData: string | null = null;
-      if (attachment) {
-        attachmentName = attachment.name;
-        attachmentData = await new Promise<string>((res, rej) => {
-          const reader = new FileReader();
-          reader.onload  = () => res(reader.result as string);
-          reader.onerror = rej;
-          reader.readAsDataURL(attachment);
-        });
-      }
+      // Only the file name is recorded; the file itself is not uploaded.
+      const attachmentName: string | null = attachment ? attachment.name : null;
 
-      checkSupabaseConfig();
-      // Loaded when feedback is sent, so the Supabase client stays out of the JavaScript every page loads.
-      const { createClient } = await import("@/lib/supabase/client");
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-
-      let profileAgencyId: string | null = null;
-      if (user) {
-        try {
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("agency_id")
-            .eq("id", user.id)
-            .maybeSingle();
-          profileAgencyId = profile?.agency_id ?? null;
-        } catch {
-          // Gracefully continue
-        }
-      }
-
-      const ratingCategory = (() => {
-        if (rating !== null && rating >= 4) return "praise";
-        if (rating === 3) return "general";
-        return "bug";
-      })();
-
-      const contextDataObj = {
-        rating: rating ?? null,
-        device: device ?? null,
-        os: os ?? null,
-        screen: screen ?? null,
-        viewport: viewport ?? null,
-        timezone: timezone ?? null,
-        theme: resolvedTheme ?? null,
+      // Stored through the API, which takes who sent it from the signed-in session. The browser
+      // never writes the feedback table itself and sends no identity or status fields.
+      await submitFeedback({
+        rating,
+        comment: comment.trim(),
+        attachment_name: attachmentName,
+        page: pathname,
+        browser,
+        device,
+        os,
+        screen,
+        viewport,
+        timezone,
+        theme: resolvedTheme,
         timestamp: new Date().toISOString(),
-        attachment_name: attachmentName ?? null,
-      };
-
-      const fullPayload = {
-        agency_id: profileAgencyId,
-        user_id: user?.id ?? null,
-        category: ratingCategory,
-        rating: rating !== null ? String(rating) : null,
-        subject: comment.trim().slice(0, 100) || null,
-        message: comment.trim(),
-        attachment_url: attachmentName ?? null,
-        page_url: pathname ?? null,
-        user_agent: browser ?? null,
-        context_data: contextDataObj,
-        status: "new",
-      };
-
-      let { data: insertedData, error: insertError } = await supabase
-        .from("feedback")
-        .insert(fullPayload)
-        .select("id")
-        .single();
-
-      // If client-side direct insert fails (e.g., anon key permissions), try API route
-      if (insertError) {
-        console.warn("Direct Supabase insert returned error, calling /api/feedback API fallback:", insertError.message);
-        const res = await fetch("/api/feedback", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            rating,
-            comment: comment.trim(),
-            attachment_name: attachmentName,
-            attachment_data: attachmentData,
-            page: pathname,
-            browser,
-            device,
-            os,
-            screen,
-            viewport,
-            timezone,
-            theme: resolvedTheme,
-            timestamp: new Date().toISOString(),
-            category: ratingCategory,
-            message: comment.trim(),
-            page_url: pathname,
-            context_data: contextDataObj,
-          }),
-        });
-        const apiRes = await res.json().catch(() => ({}));
-        if (!res.ok || !apiRes.ok) {
-          throw insertError;
-        }
-      }
+      });
 
       setRating(null);
       setHoveredRating(null);

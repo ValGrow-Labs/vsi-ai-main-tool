@@ -1,159 +1,52 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normaliseDomain } from "@/lib/url-input";
 import { scrapeUrl } from "@/lib/firecrawl";
+import { requireAgencyApi } from "@/lib/auth";
+import { checkUrlPolicy, UnsafeUrlError } from "@/lib/net/safe-fetch";
 import { callOpenRouter } from "@/lib/llm";
-import { LOCATIONS, type Location } from "@/types/search";
+import { failureReason, type ProviderFailureReason } from "@/lib/provider-status";
+import {
+  buildProfile,
+  deriveFromDomain,
+  parseModelJson,
+  unavailableMessage,
+  type AnalysisSuccessResponse,
+  type AnalysisUnavailableResponse,
+} from "./website-profile";
+
+export type {
+  ExtractedWebsiteData,
+  DomainDerivedProfile,
+  AnalysisSuccessResponse,
+  AnalysisUnavailableResponse,
+} from "./website-profile";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-export interface ExtractedWebsiteData {
-  brandName: string;
-  domain: string;
-  businessType: string;
-  websiteTitle: string;
-  metaDescription: string;
-  language: string;
-  location: string;
-  locationCode: Location;
-  suggestedTopics: string[];
-  suggestedKeywords: Array<{
-    keyword: string;
-    category: "primary" | "long_tail" | "geo" | "ai_search" | "branded";
-    categoryLabel: string;
-    selected: boolean;
-  }>;
-  sitemapUrl: string;
-  competitiveAdvantage: string;
-  aboutBusiness: string;
-  targetCustomers: string[];
-  suggestedCompetitors: Array<{
-    domain: string;
-    name: string;
-    market: string;
-    selected: boolean;
-  }>;
-  geoTopics: string[];
-}
+const MODEL = "meta-llama/llama-3.3-70b-instruct:free";
 
-/** Helper to clean domain name for brand fallback */
-function extractBrandFromDomain(domain: string): string {
-  const parts = domain.split(".");
-  if (parts.length >= 2) {
-    const main = parts[parts.length - 2];
-    return main.charAt(0).toUpperCase() + main.slice(1);
-  }
-  return domain;
-}
-
-function detectDomainLocation(domain: string): { location: string; locationCode: Location } {
-  const d = domain.toLowerCase().trim();
-  if (d.endsWith(".in") || d.endsWith(".co.in")) return { location: "India", locationCode: "in" };
-  if (d.endsWith(".uk") || d.endsWith(".co.uk")) return { location: "United Kingdom", locationCode: "uk" };
-  if (d.endsWith(".ae") || d.endsWith(".co.ae")) return { location: "UAE", locationCode: "ae" };
-  if (d.endsWith(".sg") || d.endsWith(".com.sg")) return { location: "Singapore", locationCode: "sg" };
-  if (d.endsWith(".lk")) return { location: "Sri Lanka", locationCode: "lk" };
-  return { location: "United States", locationCode: "us" };
-}
-
-/** Fallback extraction using domain and HTML heuristics */
-function generateFallbackData(domain: string, title?: string, description?: string, h1s?: string[]): ExtractedWebsiteData {
-  const brand = extractBrandFromDomain(domain);
-  const cleanTitle = title?.trim() || `${brand} Official Website`;
-  const cleanDesc = description?.trim() || `${brand} provides products and services online.`;
-  const locInfo = detectDomainLocation(domain);
-
-  return {
-    brandName: brand,
-    domain: domain,
-    businessType: "E-commerce & Online Services",
-    websiteTitle: cleanTitle,
-    metaDescription: cleanDesc,
-    language: "English",
-    location: locInfo.location,
-    locationCode: locInfo.locationCode,
-    suggestedTopics: [
-      `${brand} Products`,
-      "Online Shopping",
-      "Customer Services",
-      "Deals & Offers",
-      "Trending Collections",
-    ],
-    suggestedKeywords: [
-      { keyword: `best ${brand.toLowerCase()} products`, category: "primary", categoryLabel: "Primary Search", selected: true },
-      { keyword: `buy ${brand.toLowerCase()} online`, category: "long_tail", categoryLabel: "Transactional", selected: true },
-      { keyword: `${brand.toLowerCase()} review`, category: "branded", categoryLabel: "Branded Search", selected: true },
-      { keyword: `top deals on ${brand.toLowerCase()}`, category: "primary", categoryLabel: "Primary Search", selected: true },
-      { keyword: `who is the leading ${brand.toLowerCase()} provider`, category: "ai_search", categoryLabel: "AI Overview", selected: true },
-    ],
-    sitemapUrl: `https://${domain}/sitemap.xml`,
-    competitiveAdvantage: `${brand} offers high quality products with fast customer service and reliable shipping.`,
-    aboutBusiness: cleanDesc,
-    targetCustomers: ["Online shoppers", "Individual consumers", "Small businesses"],
-    suggestedCompetitors: [
-      { domain: `competitor-${domain}`, name: `Top Competitor 1`, market: locInfo.location, selected: true },
-      { domain: `leading-market-${domain}`, name: `Market Leader 2`, market: locInfo.location, selected: true },
-    ],
-    geoTopics: [
-      `What are the best products from ${brand}?`,
-      `How does ${brand} compare to top competitors?`,
-      `Where is ${brand} headquartered and available?`,
-    ],
+/**
+ * Automatic analysis couldn't be completed. Nothing about the business is returned — only what comes
+ * straight from the domain the user typed (brand and ccTLD market), as editable suggestions.
+ */
+function unavailable(domain: string, reason: ProviderFailureReason, stage: "website" | "analysis") {
+  const body: AnalysisUnavailableResponse = {
+    success: false,
+    status: "ANALYSIS_UNAVAILABLE",
+    reason,
+    message: unavailableMessage(reason, stage),
+    derived: deriveFromDomain(domain),
   };
+  return NextResponse.json(body, { status: 503 });
 }
 
-export async function POST(req: NextRequest) {
-  try {
-    let body: { url?: unknown };
-    try {
-      body = (await req.json()) as { url?: unknown };
-    } catch {
-      return NextResponse.json({ success: false, error: "Please enter a valid website URL." }, { status: 400 });
-    }
+function buildPrompt(domain: string, title: string | null, description: string | null, markdown: string): string {
+  return `Analyze this website content and extract business intelligence. Use only what the content shows.
+If the content doesn't show something, use null (or an empty list). Never guess a location, and only list
+competitors whose real website domain you know; otherwise return an empty list.
 
-    const rawUrl = typeof body.url === "string" ? body.url.trim() : "";
-    if (!rawUrl) {
-      return NextResponse.json({ success: false, error: "Please enter a valid website URL." }, { status: 400 });
-    }
-
-    // Add protocol if missing for normalisation
-    const urlWithProto = rawUrl.startsWith("http://") || rawUrl.startsWith("https://") ? rawUrl : `https://${rawUrl}`;
-    const parsed = normaliseDomain(urlWithProto);
-
-    if (!parsed?.domain) {
-      return NextResponse.json({ success: false, error: "Please enter a valid website URL." }, { status: 400 });
-    }
-
-    const targetUrl = `https://${parsed.domain}`;
-
-    // Scrape website using Firecrawl or fallback scraper
-    let scrapedResult;
-    try {
-      scrapedResult = await scrapeUrl(targetUrl);
-    } catch {
-      return NextResponse.json(
-        { success: false, error: "We couldn't access this website. Please check the URL and try again." },
-        { status: 400 }
-      );
-    }
-
-    const { markdown, title, description } = scrapedResult;
-
-    if (!markdown && !title && !description) {
-      return NextResponse.json(
-        { success: false, error: "We couldn't access this website. Please check the URL and try again." },
-        { status: 400 }
-      );
-    }
-
-    // Use LLM to extract structured website business analysis if API Key is available
-    const apiKey = process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY;
-
-    if (apiKey && process.env.OPENROUTER_API_KEY) {
-      const systemPrompt = "You are an expert AI business and SEO analyst. Respond ONLY with valid JSON.";
-      const userPrompt = `Analyze this website content and extract comprehensive business intelligence.
-
-Website Domain: ${parsed.domain}
+Website Domain: ${domain}
 Website Title: ${title ?? "N/A"}
 Meta Description: ${description ?? "N/A"}
 
@@ -168,78 +61,92 @@ Return JSON in this EXACT structure:
   "businessType": "Industry / Category",
   "language": "Primary Language e.g. English",
   "location": "Primary Country e.g. India or United States or United Arab Emirates",
-  "locationCode": "ae" | "us" | "uk" | "in" | "lk" | "sg",
+  "locationCode": "ae" | "us" | "uk" | "in" | "lk" | "sg" | null,
   "suggestedTopics": ["Topic 1", "Topic 2", "Topic 3", "Topic 4", "Topic 5"],
   "suggestedKeywords": [
-    { "keyword": "search query 1", "category": "primary", "categoryLabel": "Primary Keyword", "selected": true },
-    { "keyword": "search query 2", "category": "geo", "categoryLabel": "Location Search", "selected": true },
-    { "keyword": "search query 3", "category": "ai_search", "categoryLabel": "AI Search Prompt", "selected": true }
+    { "keyword": "search query 1", "category": "primary", "categoryLabel": "Primary Keyword" },
+    { "keyword": "search query 2", "category": "geo", "categoryLabel": "Location Search" },
+    { "keyword": "search query 3", "category": "ai_search", "categoryLabel": "AI Search Prompt" }
   ],
-  "sitemapUrl": "https://${parsed.domain}/sitemap.xml",
+  "sitemapUrl": null,
   "competitiveAdvantage": "One punchy sentence describing key edge or value proposition.",
   "aboutBusiness": "2-3 concise sentences summarizing what the business does and sells.",
   "targetCustomers": ["Group 1", "Group 2", "Group 3"],
   "suggestedCompetitors": [
-    { "domain": "competitor1.com", "name": "Competitor One", "market": "Country / Global", "selected": true },
-    { "domain": "competitor2.com", "name": "Competitor Two", "market": "Country / Global", "selected": true }
+    { "domain": "competitor1.com", "name": "Competitor One", "market": "Country / Global" }
   ],
   "geoTopics": ["Topic / Query 1 for AI search", "Topic / Query 2 for AI search"]
 }`;
+}
 
-      try {
-        const { content } = await callOpenRouter(
-          "meta-llama/llama-3.3-70b-instruct:free",
-          systemPrompt,
-          userPrompt,
-          process.env.OPENROUTER_API_KEY
-        );
+export async function POST(req: NextRequest) {
+  const auth = await requireAgencyApi();
+  if (auth instanceof Response) return auth;
 
-        if (content) {
-          const match = content.match(/\{[\s\S]*\}/);
-          if (match) {
-            const parsedData = JSON.parse(match[0]);
-            const finalData: ExtractedWebsiteData = {
-              brandName: parsedData.brandName || extractBrandFromDomain(parsed.domain),
-              domain: parsed.domain,
-              businessType: parsedData.businessType || "Online Retail / Services",
-              websiteTitle: title || parsedData.brandName || parsed.domain,
-              metaDescription: description || parsedData.aboutBusiness || "",
-              language: parsedData.language || "English",
-              location: parsedData.location || "United States",
-              locationCode: (["ae", "us", "uk", "in", "lk", "sg"].includes(parsedData.locationCode) ? parsedData.locationCode : "us") as Location,
-              suggestedTopics: Array.isArray(parsedData.suggestedTopics) && parsedData.suggestedTopics.length > 0
-                ? parsedData.suggestedTopics
-                : [`${parsedData.brandName || parsed.domain} Services`, "Online Solutions"],
-              suggestedKeywords: Array.isArray(parsedData.suggestedKeywords) ? parsedData.suggestedKeywords : [],
-              sitemapUrl: parsedData.sitemapUrl || `https://${parsed.domain}/sitemap.xml`,
-              competitiveAdvantage: parsedData.competitiveAdvantage || "Leading provider with dedicated customer focus.",
-              aboutBusiness: parsedData.aboutBusiness || description || "Comprehensive products and service provider.",
-              targetCustomers: Array.isArray(parsedData.targetCustomers) ? parsedData.targetCustomers : ["Consumers", "Businesses"],
-              suggestedCompetitors: Array.isArray(parsedData.suggestedCompetitors) ? parsedData.suggestedCompetitors.map((c: { domain?: string; name?: string; market?: string }) => ({
-                domain: c.domain?.toLowerCase().replace(/^https?:\/\//i, '').replace(/\/.*$/, '') || `competitor-${parsed.domain}`,
-                name: c.name || c.domain || "Market Competitor",
-                market: c.market || parsedData.location || "Global",
-                selected: true,
-              })) : [],
-              geoTopics: Array.isArray(parsedData.geoTopics) ? parsedData.geoTopics : [],
-            };
-
-            return NextResponse.json({ success: true, data: finalData });
-          }
-        }
-      } catch {
-        // Fall back to heuristic data below
-      }
-    }
-
-    // Fallback heuristic extraction if LLM is offline or no API key
-    const fallback = generateFallbackData(parsed.domain, title ?? undefined, description ?? undefined);
-    return NextResponse.json({ success: true, data: fallback });
-  } catch (err) {
-    console.error("[analyze-website] error:", err);
-    return NextResponse.json(
-      { success: false, error: "Website analysis encountered an error. Please try again." },
-      { status: 500 }
-    );
+  let body: { url?: unknown };
+  try {
+    body = (await req.json()) as { url?: unknown };
+  } catch {
+    return NextResponse.json({ success: false, error: "Please enter a valid website URL." }, { status: 400 });
   }
+
+  const rawUrl = typeof body.url === "string" ? body.url.trim() : "";
+  const urlWithProto = rawUrl.startsWith("http://") || rawUrl.startsWith("https://") ? rawUrl : `https://${rawUrl}`;
+  const parsed = rawUrl ? normaliseDomain(urlWithProto) : null;
+  if (!parsed?.domain) {
+    return NextResponse.json({ success: false, error: "Please enter a valid website URL." }, { status: 400 });
+  }
+  const domain = parsed.domain;
+  // Outbound policy (sync part): no internal hosts, IP literals or metadata names — refused up front.
+  const policy = checkUrlPolicy(`https://${domain}`);
+  if (!policy.ok) {
+    return NextResponse.json({ success: false, error: "Please enter a public website address." }, { status: 400 });
+  }
+
+  // No analysis service: say so. Don't fetch the site for nothing, and never invent a profile.
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) return unavailable(domain, "PROVIDER_NOT_CONFIGURED", "analysis");
+
+  // 1. Read the website.
+  let page;
+  try {
+    page = await scrapeUrl(`https://${domain}`);
+  } catch (err) {
+    // The name resolved to a private/internal address (checked by scrapeUrl before any fetch).
+    if (err instanceof UnsafeUrlError) {
+      return NextResponse.json({ success: false, error: "Please enter a public website address." }, { status: 400 });
+    }
+    console.warn("[analyze-website] website fetch failed:", err instanceof Error ? err.message : err);
+    return unavailable(domain, failureReason(err), "website");
+  }
+  if (!page.markdown?.trim() && !page.title && !page.description) {
+    return unavailable(domain, "INVALID_RESPONSE", "website");
+  }
+
+  // 2. Ask the model to read it.
+  let content: string | null;
+  try {
+    const res = await callOpenRouter(
+      MODEL,
+      "You are an expert AI business and SEO analyst. Respond ONLY with valid JSON.",
+      buildPrompt(domain, page.title, page.description, page.markdown ?? ""),
+      apiKey,
+      1800,
+    );
+    if (!res.content) {
+      return unavailable(domain, res.rateLimited ? "PROVIDER_RATE_LIMITED" : "PROVIDER_ERROR", "analysis");
+    }
+    content = res.content;
+  } catch (err) {
+    console.warn("[analyze-website] analysis failed:", err instanceof Error ? err.message : err);
+    return unavailable(domain, failureReason(err), "analysis");
+  }
+
+  // 3. Keep only what the model actually said about this business.
+  const json = parseModelJson(content);
+  const profile = json ? buildProfile(json, domain, { title: page.title, description: page.description }) : null;
+  if (!profile) return unavailable(domain, "INVALID_RESPONSE", "analysis");
+
+  const ok: AnalysisSuccessResponse = { success: true, data: profile };
+  return NextResponse.json(ok);
 }

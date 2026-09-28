@@ -7,14 +7,16 @@
  * - Engines VSI doesn't collect are never given numbers.
  */
 import { detectPlatform, PLATFORM_LABELS } from "@/types/search";
+import { AI_ENGINES, AI_ENGINE_IDS, type AiEngineId } from "@/lib/ai-engines";
 
-export type EngineId = "google_ai_mode" | "ai_overviews" | "chatgpt";
+/** Engine ids and labels come from the central mapping in ai-engines.ts. */
+export type EngineId = AiEngineId;
 
-export const ENGINES: { id: EngineId; label: string; description: string }[] = [
-  { id: "google_ai_mode", label: "Google AI Mode", description: "Google's conversational AI answers" },
-  { id: "chatgpt", label: "ChatGPT", description: "Answers from ChatGPT" },
-  { id: "ai_overviews", label: "AI Overviews", description: "The AI summary at the top of Google results" },
-];
+export const ENGINES: { id: EngineId; label: string; description: string }[] = AI_ENGINE_IDS.map((id) => ({
+  id,
+  label: AI_ENGINES[id].label,
+  description: AI_ENGINES[id].description,
+}));
 
 /** AI surfaces VSI does not check yet. Shown as "Coming soon", never with numbers. */
 export const COMING_SOON_ENGINES = ["Gemini", "Perplexity"];
@@ -27,9 +29,10 @@ export interface GeoRow {
   mentioned_in_text: boolean | null;
   client_cited: boolean | null;
   cited_domains: string[] | null;
-  ai_overview_present: boolean | null;
-  ai_overview_client_cited: boolean | null;
-  ai_overview_cited_domains: string[] | null;
+  /** Legacy duplicate of the Google request; not read (see ai-engines.ts). */
+  ai_overview_present?: boolean | null;
+  ai_overview_client_cited?: boolean | null;
+  ai_overview_cited_domains?: string[] | null;
   chatgpt_checked: boolean | null;
   chatgpt_brand_mentioned: boolean | null;
   chatgpt_brand_cited: boolean | null;
@@ -60,21 +63,20 @@ function sameSite(domain: string, own: string): boolean {
 
 /** Result for one engine on one stored check, or null if that engine wasn't checked. */
 export function engineResult(row: GeoRow, engine: EngineId): EngineResult | null {
-  if (engine === "google_ai_mode") {
+  if (engine === "google_ai_overview") {
+    // Google AI Overview, stored in the aio_* columns.
     if (row.aio_present === null || row.aio_present === undefined) return null;
     const answered = row.aio_present === true;
     const named = answered ? row.mentioned_in_text === true : false;
     const linked = answered && row.client_cited === true;
     return { answered, named, linked, appears: named || linked, domains: answered ? row.cited_domains ?? [] : [] };
   }
-  if (engine === "ai_overviews") {
-    if (row.ai_overview_present === null || row.ai_overview_present === undefined) return null;
-    const answered = row.ai_overview_present === true;
-    const linked = answered && row.ai_overview_client_cited === true;
-    return { answered, named: null, linked, appears: linked, domains: answered ? row.ai_overview_cited_domains ?? [] : [] };
-  }
+  // The legacy ai_overview_* columns only ever held a copy of the same
+  // Google request, so they are not read: counting them would count one
+  // Google AI Overview twice.
   if (row.chatgpt_checked !== true) return null;
-  const named = row.chatgpt_brand_mentioned === true;
+  // A name match about a different organisation with the same name is not a mention of you.
+  const named = row.chatgpt_brand_mentioned === true && row.chatgpt_entity_match !== false;
   const linked = row.chatgpt_brand_cited === true;
   const domains = (row.chatgpt_cited_urls ?? []).map(cleanDomain).filter(Boolean);
   return { answered: true, named, linked, appears: named || linked, domains };
@@ -121,7 +123,7 @@ export interface EngineSummary {
   appears: number;
   named: number;
   linked: number;
-  /** False when the engine doesn't report brand names (AI Overviews). */
+  /** False when the engine doesn't report brand names. */
   tracksNames: boolean;
   /** This engine's visibility per check date, oldest first. Only dates where it gave answers. */
   trend: { date: string; value: number }[];
@@ -172,7 +174,7 @@ export interface ComputeGeoOptions {
   enabled: Record<EngineId, boolean>;
 }
 
-const ENGINE_IDS: EngineId[] = ["google_ai_mode", "chatgpt", "ai_overviews"];
+const ENGINE_IDS: EngineId[] = AI_ENGINE_IDS;
 
 function visibilityOf(rows: GeoRow[]): { answered: number; appears: number } {
   let answered = 0;
@@ -199,7 +201,7 @@ export function computeGeo(allRows: GeoRow[], { domain, enabled }: ComputeGeoOpt
     appears: 0,
     named: 0,
     linked: 0,
-    tracksNames: e.id !== "ai_overviews",
+    tracksNames: true,
     trend: [],
   }));
   const engineById = Object.fromEntries(engines.map((e) => [e.id, e])) as Record<EngineId, EngineSummary>;
@@ -405,7 +407,7 @@ function escapeRegExp(s: string) {
 export function highlightBrand(text: string, tokens: string[]): EvidenceSegment[] {
   const words = tokens.filter((t) => t.length >= 4 && !t.includes("."));
   if (!text || words.length === 0) return [{ text, you: false }];
-  const re = new RegExp(`(${words.map(escapeRegExp).sort((a, b) => b.length - a.length).join("|")})`, "gi");
+  const re = new RegExp(`((?<![\\p{L}\\p{N}])(?:${words.map(escapeRegExp).sort((a, b) => b.length - a.length).join("|")})(?![\\p{L}\\p{N}]))`, "giu");
   return text
     .split(re)
     .filter((part) => part.length > 0)

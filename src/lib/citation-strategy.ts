@@ -264,7 +264,7 @@ export interface RunStrategyResult {
 
 export async function runCitationStrategy(input: RunStrategyInput): Promise<RunStrategyResult> {
   const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) return { ok: false, error: "OPENROUTER_API_KEY not configured" };
+  if (!apiKey) return { ok: false, error: "Strategy generation isn't available: the AI service isn't configured." };
   if (input.citationUrls.length === 0) return { ok: false, error: "No citation URLs to analyze" };
 
   // Async generation lets us widen the funnel. Up to 10 competitor URLs
@@ -347,7 +347,7 @@ export async function runCitationStrategy(input: RunStrategyInput): Promise<RunS
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return { ok: false, error: "LLM returned invalid JSON" };
+    return { ok: false, error: "The AI returned an answer we couldn't read. Try again." };
   }
 
   let clientPageAudit: ClientPageAudit | null = null;

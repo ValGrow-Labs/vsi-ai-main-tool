@@ -13,7 +13,7 @@ export const SERVICE_TYPE_LABELS: Record<ServiceType, { label: string; short: st
     label: "GEO Only",
     short: "GEO",
     color: "bg-surface-2 text-ink-2",
-    description: "AI Mode citations & mentions only",
+    description: "AI Overview citations & mentions only",
   },
   seo_geo: {
     label: "SEO + GEO",
@@ -160,10 +160,16 @@ export const PLATFORM_LABELS: Record<PlatformType, { label: string; color: strin
 };
 
 export function detectPlatform(domain: string, clientDomain?: string): PlatformType {
-  const d = domain.toLowerCase();
-  if (clientDomain && (d.includes(clientDomain) || clientDomain.includes(d))) return "brand";
+  // Exact host or subdomain only: "netflix.com" is not "x.com", and
+  // "notexample.com" is not the client "example.com".
+  const clean = (s: string) =>
+    (s || "").trim().toLowerCase().replace(/^[a-z]+:\/+/, "").replace(/^www\./, "").split(/[/?#]/)[0].replace(/:\d+$/, "");
+  const d = clean(domain);
+  const onSite = (site: string) => !!d && !!site && (d === site || d.endsWith(`.${site}`));
+  const client = clean(clientDomain ?? "");
+  if (client.includes(".") && onSite(client)) return "brand";
   for (const { platform, patterns } of PLATFORM_PATTERNS) {
-    if (patterns.some((p) => d.includes(p))) return platform;
+    if (patterns.some((p) => onSite(p))) return platform;
   }
   return "other";
 }
@@ -187,6 +193,10 @@ export interface SerpResult {
   rankingTitle: string | null;
   serpFeatures: string[];
   organicResults: OrganicResult[];  // top 10 SERP results
+  /** Which provider answered ("serper" | "serpapi" | "demo"). */
+  provider?: string;
+  /** True only for opt-in development placeholder data (VSI_ALLOW_DEMO_DATA). Never stored. */
+  isDemo?: boolean;
 }
 
 export interface AIOCitation {
@@ -218,6 +228,12 @@ export interface AIOResult {
   citedDomains: string[];          // domain-only list for DB storage
   clientCited: boolean;            // domain appears as a source link
   mentionedInText: boolean;        // brand name appears in AIO text
+  /** Provenance: the Google surface that produced this answer ("google_ai_overview"). */
+  engine?: string;
+  /** Which provider fetched it ("serpapi" | "demo"). */
+  provider?: string;
+  /** True only for opt-in development placeholder data (VSI_ALLOW_DEMO_DATA). Never stored. */
+  isDemo?: boolean;
 }
 
 export type GapLabel =
@@ -256,25 +272,25 @@ export const GAP_CLASSIFICATIONS: Record<GapLabel, GapClassification> = {
     label: "weak_double_loss",
     dot: "red",
     title: "Weak / Double Loss",
-    description: "Not ranking in Google organic AND not cited or mentioned in AI Mode — invisible on both channels",
+    description: "Not ranking in Google organic AND not cited or mentioned in AI Overview — invisible on both channels",
   },
   seo_only: {
     label: "seo_only",
     dot: "yellow",
     title: "SEO Only",
-    description: "Ranking in Google organic, but completely absent from AI Mode answers and citations",
+    description: "Ranking in Google organic, but completely absent from AI Overview answers and citations",
   },
   ai_mention_only: {
     label: "ai_mention_only",
     dot: "blue",
     title: "AI Mention Only",
-    description: "Brand name is mentioned in AI Mode answer text, but website is not ranking in Google organic or cited as a source link",
+    description: "Brand name is mentioned in AI Overview answer text, but website is not ranking in Google organic or cited as a source link",
   },
   ai_visible: {
     label: "ai_visible",
     dot: "green",
     title: "AI Visible",
-    description: "Cited as a source link AND mentioned in AI Mode answer text, despite not ranking in Google organic search",
+    description: "Cited as a source link AND mentioned in AI Overview answer text, despite not ranking in Google organic search",
   },
   partial_visibility: {
     label: "partial_visibility",
@@ -286,32 +302,32 @@ export const GAP_CLASSIFICATIONS: Record<GapLabel, GapClassification> = {
     label: "strong_visibility",
     dot: "green",
     title: "Strong Visibility",
-    description: "Ranking in Google organic, cited as a source link, AND mentioned in AI Mode text — winning on all channels",
+    description: "Ranking in Google organic, cited as a source link, AND mentioned in AI Overview text — winning on all channels",
   },
   citation_only: {
     label: "citation_only",
     dot: "blue",
     title: "Citation Only",
-    description: "Website is cited as a source link in AI Mode, but brand name is not mentioned in text and not ranking in Google organic",
+    description: "Website is cited as a source link in AI Overview, but brand name is not mentioned in text and not ranking in Google organic",
   },
   seo_plus_citation: {
     label: "seo_plus_citation",
     dot: "green",
     title: "SEO + Citation",
-    description: "Ranking in Google organic AND cited as a source link in AI Mode, but brand name is unmentioned in text",
+    description: "Ranking in Google organic AND cited as a source link in AI Overview, but brand name is unmentioned in text",
   },
   // Backward compatibility mappings
   aligned: {
     label: "strong_visibility",
     dot: "green",
     title: "Strong Visibility",
-    description: "Ranking in Google organic, cited as a source link, AND mentioned in AI Mode text",
+    description: "Ranking in Google organic, cited as a source link, AND mentioned in AI Overview text",
   },
   aligned_no_mention: {
     label: "seo_plus_citation",
     dot: "green",
     title: "SEO + Citation",
-    description: "Ranking in Google organic AND cited as a source link in AI Mode, but brand name is unmentioned in text",
+    description: "Ranking in Google organic AND cited as a source link in AI Overview, but brand name is unmentioned in text",
   },
   ai_mentioned: {
     label: "partial_visibility",
@@ -323,49 +339,49 @@ export const GAP_CLASSIFICATIONS: Record<GapLabel, GapClassification> = {
     label: "seo_only",
     dot: "yellow",
     title: "SEO Only",
-    description: "Ranking in Google organic, but completely absent from AI Mode answers and citations",
+    description: "Ranking in Google organic, but completely absent from AI Overview answers and citations",
   },
   geo_cited: {
     label: "ai_visible",
     dot: "green",
     title: "AI Visible",
-    description: "Cited as a source link AND mentioned in AI Mode answer text, despite not ranking in Google organic search",
+    description: "Cited as a source link AND mentioned in AI Overview answer text, despite not ranking in Google organic search",
   },
   geo_cited_no_mention: {
     label: "citation_only",
     dot: "blue",
     title: "Citation Only",
-    description: "Website is cited as a source link in AI Mode, but brand name is not mentioned in text and not ranking in Google organic",
+    description: "Website is cited as a source link in AI Overview, but brand name is not mentioned in text and not ranking in Google organic",
   },
   geo_mentioned: {
     label: "ai_mention_only",
     dot: "blue",
     title: "AI Mention Only",
-    description: "Brand name is mentioned in AI Mode answer text, but website is not ranking in Google organic or cited as a source link",
+    description: "Brand name is mentioned in AI Overview answer text, but website is not ranking in Google organic or cited as a source link",
   },
   geo_invisible: {
     label: "weak_double_loss",
     dot: "red",
     title: "Weak / Double Loss",
-    description: "Not ranking in Google organic AND not cited or mentioned in AI Mode — invisible on both channels",
+    description: "Not ranking in Google organic AND not cited or mentioned in AI Overview — invisible on both channels",
   },
   seo_ranked: {
     label: "seo_only",
     dot: "yellow",
     title: "SEO Only",
-    description: "Ranking in Google organic, but completely absent from AI Mode answers and citations",
+    description: "Ranking in Google organic, but completely absent from AI Overview answers and citations",
   },
   seo_ranked_no_aio: {
     label: "seo_only",
     dot: "yellow",
     title: "SEO Only",
-    description: "Ranking in Google organic, but completely absent from AI Mode answers and citations",
+    description: "Ranking in Google organic, but completely absent from AI Overview answers and citations",
   },
   seo_not_ranked: {
     label: "weak_double_loss",
     dot: "red",
     title: "Weak / Double Loss",
-    description: "Not ranking in Google organic AND not cited or mentioned in AI Mode — invisible on both channels",
+    description: "Not ranking in Google organic AND not cited or mentioned in AI Overview — invisible on both channels",
   },
 };
 

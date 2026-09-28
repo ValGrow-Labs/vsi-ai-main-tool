@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isComparableSnapshot } from "@/lib/task-outcome";
+import type { RankRow } from "@/lib/search";
 import { createClient } from "@/lib/supabase/server";
-import { requireAgency } from "@/lib/auth";
+import { requireAgencyApi } from "@/lib/auth";
 import { buildReportContent, generateShareToken, type SnapshotRow } from "@/lib/report-builder";
 import { loadReportExtras } from "@/lib/report-extras";
+import { shareLinkExpiry } from "@/lib/report-share";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -16,7 +19,11 @@ export async function POST(req: NextRequest) {
  return NextResponse.json({ error: "Choose a project first." }, { status: 400 });
  }
 
- const session = await requireAgency();
+ // 401 signed out, 403 disabled / no organization — JSON, never a redirect.
+
+ const session = await requireAgencyApi();
+
+ if (session instanceof Response) return session;
  const supabase = await createClient();
  const isSuperAdmin = session.role === "super_admin";
 
@@ -41,14 +48,22 @@ export async function POST(req: NextRequest) {
 
  // Pull the last 14 days of snapshots, split into current/previous windows
  const cutoff = new Date(Date.now() - RANGE_DAYS * 2 * 86400 * 1000).toISOString();
- const { data: snapshots } = await supabase
+ const snapshotQuery = (extra: string) =>
+ supabase
  .from("search_results")
- .select("id, tracked_keyword_id, keyword, track_type, rank_position, aio_present, client_cited, mentioned_in_text, chatgpt_checked, chatgpt_brand_cited, chatgpt_brand_mentioned, citations_json, gap_label, created_at")
+ .select(`id, tracked_keyword_id, keyword, track_type, rank_position, aio_present, client_cited, mentioned_in_text, chatgpt_checked, chatgpt_brand_cited, chatgpt_brand_mentioned, citations_json, gap_label, created_at, serp_first:serp_results_json->0${extra}`)
  .eq("client_id", client_id)
  .gte("created_at", cutoff)
  .order("created_at", { ascending: false });
+ // rank_status needs migration 042; read without it when it isn't applied.
+ const withStatus = await snapshotQuery(", rank_status");
+ const snapshots = withStatus.error ? (await snapshotQuery("")).data : withStatus.data;
 
- const rows: SnapshotRow[] = (snapshots ?? []) as unknown as SnapshotRow[];
+ // A failed or skipped check is not a result: its NULL rank is not "not
+ // ranking", and the gap classification built from it is meaningless.
+ const rows: SnapshotRow[] = ((snapshots ?? []) as unknown as (SnapshotRow & { rank_status?: RankRow["rank_status"]; serp_first?: unknown })[]).map(
+ (r) => (isComparableSnapshot({ ...r, rank_status: r.rank_status ?? null }) ? r : { ...r, gap_label: "" }),
+ );
  const splitTime = Date.now() - RANGE_DAYS * 86400 * 1000;
  const current = rows.filter((r) => new Date(r.created_at).getTime() >= splitTime);
  const previous = rows.filter((r) => new Date(r.created_at).getTime() < splitTime);
@@ -98,6 +113,7 @@ export async function POST(req: NextRequest) {
  client_id: client_id,
  type: "weekly",
  share_token: shareToken,
+ expires_at: shareLinkExpiry(),
  content,
  created_by: session.userId,
  })

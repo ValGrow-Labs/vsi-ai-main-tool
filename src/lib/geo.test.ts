@@ -3,7 +3,7 @@ import { answerBreakdown, competitorPresence, computeGeo, engineResult, geoConcl
 import { compareCompetitors } from "./geo-compare";
 import { geoFindings } from "./geo-findings";
 
-const ALL_ON = { google_ai_mode: true, chatgpt: true, ai_overviews: false };
+const ALL_ON = { google_ai_overview: true, chatgpt: true };
 
 function row(overrides: Partial<GeoRow>): GeoRow {
   return {
@@ -29,23 +29,25 @@ function row(overrides: Partial<GeoRow>): GeoRow {
 
 describe("engineResult", () => {
   it("treats missing data as not checked, never as 'no'", () => {
-    expect(engineResult(row({}), "google_ai_mode")).toBeNull();
-    expect(engineResult(row({}), "ai_overviews")).toBeNull();
+    expect(engineResult(row({}), "google_ai_overview")).toBeNull();
     expect(engineResult(row({ chatgpt_checked: false }), "chatgpt")).toBeNull();
   });
 
-  it("counts AI Mode appearances from name or link", () => {
-    expect(engineResult(row({ aio_present: true, mentioned_in_text: true, client_cited: false }), "google_ai_mode")).toMatchObject({
+  it("counts Google AI Overview appearances from name or link", () => {
+    expect(engineResult(row({ aio_present: true, mentioned_in_text: true, client_cited: false }), "google_ai_overview")).toMatchObject({
       answered: true,
       named: true,
       linked: false,
       appears: true,
     });
-    expect(engineResult(row({ aio_present: false, client_cited: true }), "google_ai_mode")).toMatchObject({ answered: false, appears: false });
+    expect(engineResult(row({ aio_present: false, client_cited: true }), "google_ai_overview")).toMatchObject({ answered: false, appears: false });
   });
 
-  it("does not claim AI Overviews tracks names", () => {
-    expect(engineResult(row({ ai_overview_present: true, ai_overview_client_cited: true }), "ai_overviews")?.named).toBeNull();
+  it("never reads the legacy ai_overview_* copy as a second Google engine", () => {
+    // Legacy rows held a copy of the same Google request in ai_overview_*: it's ignored.
+    const legacy = row({ ai_overview_present: true, ai_overview_client_cited: true, ai_overview_cited_domains: ["example.com"] });
+    expect(engineResult(legacy, "google_ai_overview")).toBeNull();
+    expect(engineResult(legacy, "chatgpt")).toBeNull();
   });
 });
 
@@ -64,7 +66,7 @@ describe("latestPerSearch", () => {
 
 describe("computeGeo", () => {
   const rows: GeoRow[] = [
-    // You're named and linked in AI Mode
+    // You're named and linked in the Google AI Overview
     row({ tracked_keyword_id: "k1", keyword: "best plumber", aio_present: true, mentioned_in_text: true, client_cited: true, cited_domains: ["example.com", "rival.com"] }),
     // Not mentioned; rival and reddit are linked
     row({ tracked_keyword_id: "k2", keyword: "emergency plumber", aio_present: true, mentioned_in_text: false, client_cited: false, cited_domains: ["rival.com", "www.reddit.com"] }),
@@ -115,10 +117,9 @@ describe("computeGeo", () => {
   });
 
   it("reports engine coverage without inventing unsupported engines", () => {
-    expect(s.engines.map((e) => e.id).sort()).toEqual(["ai_overviews", "chatgpt", "google_ai_mode"]);
-    const mode = s.engines.find((e) => e.id === "google_ai_mode")!;
-    expect(mode).toMatchObject({ checked: 3, answered: 2, appears: 1 });
-    expect(s.engines.find((e) => e.id === "ai_overviews")).toMatchObject({ enabled: false, checked: 0 });
+    expect(s.engines.map((e) => e.id).sort()).toEqual(["chatgpt", "google_ai_overview"]);
+    const google = s.engines.find((e) => e.id === "google_ai_overview")!;
+    expect(google).toMatchObject({ label: "Google AI Overview", checked: 3, answered: 2, appears: 1 });
   });
 
   it("builds a trend per check date", () => {
@@ -129,12 +130,11 @@ describe("computeGeo", () => {
   });
 
   it("builds each engine's own trend from the dates it answered", () => {
-    expect(s.engines.find((e) => e.id === "google_ai_mode")!.trend).toEqual([
+    expect(s.engines.find((e) => e.id === "google_ai_overview")!.trend).toEqual([
       { date: "2026-09-01", value: 100 },
       { date: "2026-09-10", value: 50 },
     ]);
     expect(s.engines.find((e) => e.id === "chatgpt")!.trend).toEqual([{ date: "2026-09-10", value: 100 }]);
-    expect(s.engines.find((e) => e.id === "ai_overviews")!.trend).toEqual([]);
   });
 
   it("splits engine answers into named, linked, both and neither", () => {
@@ -173,8 +173,19 @@ describe("geoFindings", () => {
     expect(keys).toEqual(["geo:entity", "geo:not_mentioned", "geo:competitors_linked", "geo:linked_not_named", "geo:platforms"]);
   });
 
-  it("links single-search tasks to that search so they can be verified", () => {
+  it("counts a ChatGPT answer about a different organisation with the same name as not mentioned", () => {
     const notMentioned = findings.find((f) => f.key === "geo:not_mentioned")!;
+    // k1 (Google AI answer without you) and k3 (ChatGPT named another "you").
+    expect(notMentioned.affected.map((a) => a.label).sort()).toEqual(["a", "c"]);
+    expect(notMentioned.draft?.trackedKeywordId).toBeNull();
+  });
+
+  it("links single-search tasks to that search so they can be verified", () => {
+    const single = computeGeo(
+      [row({ tracked_keyword_id: "k1", keyword: "a", aio_present: true, mentioned_in_text: false, client_cited: false, cited_domains: ["rival.com"] })],
+      { domain: "example.com", enabled: ALL_ON },
+    );
+    const notMentioned = geoFindings(single, "client-1").find((f) => f.key === "geo:not_mentioned")!;
     expect(notMentioned.draft?.trackedKeywordId).toBe("k1");
     expect(notMentioned.draft?.group).toBe("Content");
   });

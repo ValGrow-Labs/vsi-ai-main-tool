@@ -27,7 +27,10 @@ interface MessagesContextProps {
   restoreMessage: (id: string, folder?: MessageFolder) => Promise<void>;
   updateMessageLabels: (id: string, labels: string[]) => Promise<void>;
   updateMessage: (id: string, updates: Partial<Message>) => Promise<void>;
-  sendMessage: (draft: ComposeDraft) => Promise<void>;
+  /** Stores the message in Sent (no email is delivered). Resolves false if it wasn't stored. */
+  sendMessage: (draft: ComposeDraft) => Promise<boolean>;
+  /** Why the last load failed, or null. */
+  loadError: string | null;
   saveDraft: (draft: ComposeDraft) => Promise<string | undefined>;
   editingDraft: Message | null;
   setEditingDraft: (msg: Message | null) => void;
@@ -42,18 +45,28 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
   const [toastMessage, setToastMessage] = useState<ToastPayload>(null);
   const [editingDraft, setEditingDraft] = useState<Message | null>(null);
 
-  // Fetch messages from backend API
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const flash = useCallback((msg: ToastPayload, ms = 3000) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), ms);
+  }, []);
+
+  // Fetch the signed-in user's messages. A failure is reported, never replaced with other data.
   const loadMessages = useCallback(async () => {
     try {
       const res = await fetch("/api/messages", { cache: "no-store" });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success && Array.isArray(json.messages)) {
-          setMessages(json.messages);
-        }
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json.success && Array.isArray(json.messages)) {
+        setMessages(json.messages);
+        setLoadError(null);
+      } else {
+        if (res.status === 401) setMessages([]);
+        setLoadError(json.error || "Messages couldn't be loaded.");
       }
     } catch (e) {
       console.error("Failed to fetch messages from API", e);
+      setLoadError("Messages couldn't be loaded.");
     } finally {
       setIsLoading(false);
     }
@@ -94,26 +107,46 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
   const draftsCount = messages.filter(m => m.folder === "drafts").length;
   const archivedCount = messages.filter(m => m.folder === "archived").length;
 
-  const markAsRead = async (id: string) => {
-    setMessages(prev => prev.map(m => m.id === id ? { ...m, status: "read", updatedAt: new Date().toISOString() } : m));
+  /** PATCH one message. Returns the stored message, or null (with an error toast) if it wasn't saved. */
+  const patchMessage = async (id: string, updates: Record<string, unknown>): Promise<Message | null> => {
     try {
-      await fetch("/api/messages", {
+      const res = await fetch("/api/messages", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, status: "read" })
+        body: JSON.stringify({ id, ...updates }),
       });
-    } catch {}
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json.success && json.message) return json.message as Message;
+      flash(`That change wasn't saved: ${json.error || "please try again."}`, 4000);
+    } catch {
+      flash("That change wasn't saved: please try again.", 4000);
+    }
+    // Undo the optimistic change by reloading what is really stored.
+    void refreshMessages();
+    return null;
+  };
+
+  const removeMessage = async (id: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/messages?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json.success) return true;
+      flash(`That message wasn't deleted: ${json.error || "please try again."}`, 4000);
+    } catch {
+      flash("That message wasn't deleted: please try again.", 4000);
+    }
+    void refreshMessages();
+    return false;
+  };
+
+  const markAsRead = async (id: string) => {
+    setMessages(prev => prev.map(m => m.id === id ? { ...m, status: "read", updatedAt: new Date().toISOString() } : m));
+    await patchMessage(id, { status: "read" });
   };
 
   const markAsUnread = async (id: string) => {
     setMessages(prev => prev.map(m => m.id === id ? { ...m, status: "unread", updatedAt: new Date().toISOString() } : m));
-    try {
-      await fetch("/api/messages", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, status: "unread" })
-      });
-    } catch {}
+    await patchMessage(id, { status: "unread" });
   };
 
   const toggleStar = async (id: string) => {
@@ -121,67 +154,38 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     if (!target) return;
     const newStar = !target.isStarred;
     setMessages(prev => prev.map(m => m.id === id ? { ...m, isStarred: newStar, updatedAt: new Date().toISOString() } : m));
-    try {
-      await fetch("/api/messages", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, isStarred: newStar })
-      });
-    } catch {}
+    await patchMessage(id, { isStarred: newStar });
+  };
+
+  const moveToFolderSaved = async (id: string, folder: MessageFolder): Promise<boolean> => {
+    setMessages(prev => prev.map(m => m.id === id ? { ...m, folder, updatedAt: new Date().toISOString() } : m));
+    return (await patchMessage(id, { folder })) !== null;
   };
 
   const moveToFolder = async (id: string, folder: MessageFolder) => {
-    setMessages(prev => prev.map(m => m.id === id ? { ...m, folder, updatedAt: new Date().toISOString() } : m));
-    try {
-      await fetch("/api/messages", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, folder })
-      });
-    } catch {}
+    await moveToFolderSaved(id, folder);
   };
 
   const archiveMessage = async (id: string) => {
-    await moveToFolder(id, "archived");
-    setToastMessage("Message moved to Archive");
-    setTimeout(() => setToastMessage(null), 3000);
+    if (await moveToFolderSaved(id, "archived")) flash("Message moved to Archive");
   };
 
   const moveToInbox = async (id: string) => {
-    await moveToFolder(id, "inbox");
-    setToastMessage("Message moved to Inbox");
-    setTimeout(() => setToastMessage(null), 3000);
+    if (await moveToFolderSaved(id, "inbox")) flash("Message moved to Inbox");
   };
 
   const deleteMessage = async (id: string) => {
-    setMessages(prev => prev.map(m => m.id === id ? { ...m, folder: "trash", updatedAt: new Date().toISOString() } : m));
-    try {
-      await fetch("/api/messages", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, folder: "trash" })
-      });
-    } catch {}
+    await moveToFolderSaved(id, "trash");
   };
 
   const deleteDraft = async (id: string) => {
     setMessages(prev => prev.filter(m => m.id !== id));
-    try {
-      await fetch(`/api/messages?id=${encodeURIComponent(id)}`, {
-        method: "DELETE",
-      });
-    } catch {}
-    setToastMessage("Draft discarded.");
-    setTimeout(() => setToastMessage(null), 3000);
+    if (await removeMessage(id)) flash("Draft discarded.");
   };
 
   const deletePermanently = async (id: string) => {
     setMessages(prev => prev.filter(m => m.id !== id));
-    try {
-      await fetch(`/api/messages?id=${encodeURIComponent(id)}`, {
-        method: "DELETE",
-      });
-    } catch {}
+    await removeMessage(id);
   };
 
   const restoreMessage = async (id: string, folder: MessageFolder = "inbox") => {
@@ -190,127 +194,89 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
 
   const updateMessageLabels = async (id: string, labels: string[]) => {
     setMessages(prev => prev.map(m => m.id === id ? { ...m, labels, updatedAt: new Date().toISOString() } : m));
-    try {
-      await fetch("/api/messages", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, labels })
-      });
-    } catch {}
+    await patchMessage(id, { labels });
   };
 
   const updateMessage = async (id: string, updates: Partial<Message>) => {
     setMessages(prev => prev.map(m => m.id === id ? { ...m, ...updates, updatedAt: new Date().toISOString() } : m));
-    try {
-      await fetch("/api/messages", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, ...updates })
-      });
-    } catch {}
+    await patchMessage(id, updates as Record<string, unknown>);
   };
 
-  const sendMessage = async (draft: ComposeDraft) => {
-    const plainText = (draft.body || "").replace(/<[^>]+>/g, '').trim();
-    const now = new Date().toISOString();
-    const sentMsg: Message = {
-      id: `msg-sent-${Date.now()}`,
-      sender: { name: "Me (Admin)", email: "admin@searchintel.com" },
-      recipient: { name: draft.to, email: draft.to },
-      cc: draft.cc,
-      bcc: draft.bcc,
-      subject: draft.subject || "(No Subject)",
-      preview: plainText.substring(0, 75) || "(No content)",
-      body: draft.body || plainText,
-      timestamp: now,
-      updatedAt: now,
-      lastSaved: now,
-      status: "read",
-      priority: draft.priority || "normal",
-      folder: "sent",
-      isStarred: false,
-      attachments: draft.attachments || [],
-    };
-
-    // If sending an existing draft, remove the draft item
-    if (draft.id) {
-      deletePermanently(draft.id);
-    }
-
-    setMessages(prev => [sentMsg, ...prev.filter(m => draft.id ? m.id !== draft.id : true)]);
-    setActiveFolder("sent");
-    setToastMessage("Message sent successfully.");
-    setTimeout(() => setToastMessage(null), 3000);
-
-    // Save to API
+  /**
+   * Stores the message in Sent. VSI has no email delivery, so nothing reaches the recipient;
+   * the toast says so. Returns false (and keeps any draft) if it couldn't be stored.
+   */
+  const sendMessage = async (draft: ComposeDraft): Promise<boolean> => {
+    const keptDraft = draft.id ? " Your draft is still in Drafts." : "";
     try {
-      await fetch("/api/messages", {
+      const res = await fetch("/api/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(sentMsg)
+        body: JSON.stringify({
+          to: draft.to,
+          cc: draft.cc,
+          bcc: draft.bcc,
+          subject: draft.subject || "(No Subject)",
+          body: draft.body,
+          priority: draft.priority || "normal",
+          attachments: draft.attachments || [],
+          folder: "sent",
+          status: "read",
+        }),
       });
-    } catch {}
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.success || !json.message) {
+        flash(`Your message wasn't saved: ${json.error || "please try again."}${keptDraft}`, 5000);
+        return false;
+      }
+      const stored = json.message as Message;
+      setMessages(prev => [stored, ...prev.filter(m => m.id !== stored.id && (!draft.id || m.id !== draft.id))]);
+      // Only once the message is stored is the draft removed.
+      if (draft.id) await removeMessage(draft.id);
+      setActiveFolder("sent");
+      flash("Saved to Sent. VSI doesn't send email yet, so it was not delivered to the recipient.", 5000);
+      return true;
+    } catch {
+      flash(`Your message wasn't saved: please try again.${keptDraft}`, 5000);
+      return false;
+    }
   };
 
+  /** Saves a draft. Throws if it wasn't stored, so the composer never shows "Saved" for it. */
   const saveDraft = async (draft: ComposeDraft): Promise<string | undefined> => {
     if (!draft.to && !draft.subject && !draft.body) return undefined;
 
-    const plainText = (draft.body || "").replace(/<[^>]+>/g, '').trim();
-    const now = new Date().toISOString();
-    const draftId = draft.id || `msg-draft-${Date.now()}`;
-
-    const draftMsg: Message = {
-      id: draftId,
-      sender: { name: "Me (Admin)", email: "admin@searchintel.com" },
-      recipient: { name: draft.to || "Recipient", email: draft.to || "recipient@example.com" },
+    // The server assigns ids: a new draft is POSTed without one and adopts the id that comes back.
+    // PATCH carries the existing id so the server can find the user's own row.
+    const fields = {
+      to: draft.to,
       cc: draft.cc,
       bcc: draft.bcc,
-      subject: draft.subject || "(No Subject)",
-      preview: plainText.substring(0, 75) || "(Draft content)",
-      body: draft.body || plainText,
-      timestamp: now,
-      updatedAt: now,
-      lastSaved: now,
-      status: "draft",
+      subject: draft.subject,
+      body: draft.body,
       priority: draft.priority || "normal",
-      folder: "drafts",
-      isStarred: false,
       attachments: draft.attachments || [],
+      folder: "drafts",
+      status: "draft",
     };
+    const send = (method: "POST" | "PATCH") =>
+      fetch("/api/messages", {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(method === "PATCH" ? { id: draft.id, ...fields } : fields),
+      });
 
-    const isExisting = messages.some(m => m.id === draftId);
-
-    setMessages(prev => [draftMsg, ...prev.filter(m => m.id !== draftMsg.id)]);
-
-    try {
-      if (isExisting) {
-        await fetch("/api/messages", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: draftId,
-            to: draft.to,
-            cc: draft.cc,
-            bcc: draft.bcc,
-            subject: draft.subject,
-            body: draft.body,
-            priority: draft.priority || "normal",
-            attachments: draft.attachments || [],
-            folder: "drafts",
-            status: "draft",
-            lastSaved: now
-          })
-        });
-      } else {
-        await fetch("/api/messages", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(draftMsg)
-        });
-      }
-    } catch {}
-
-    return draftId;
+    let res = await send(draft.id ? "PATCH" : "POST");
+    // Not stored yet (an earlier save failed): create it.
+    if (draft.id && res.status === 404) res = await send("POST");
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.success || !json.message) {
+      throw new Error(json.error || "Draft wasn't saved.");
+    }
+    const stored = json.message as Message;
+    // If the draft was re-created it has a new server id: drop any copy under the old one.
+    setMessages(prev => [stored, ...prev.filter(m => m.id !== stored.id && (!draft.id || m.id !== draft.id))]);
+    return stored.id;
   };
 
   return (
@@ -339,6 +305,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       updateMessage,
       sendMessage,
       saveDraft,
+      loadError,
       editingDraft,
       setEditingDraft,
     }}>

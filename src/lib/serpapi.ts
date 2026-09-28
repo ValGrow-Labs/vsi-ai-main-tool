@@ -1,6 +1,9 @@
 import type { AIOResult, AIOCitation, AIOTextBlock, Location } from "@/types/search";
 import { LOCATIONS, detectPlatform } from "@/types/search";
 import { buildBrandTokens, matchesBrand } from "@/lib/brand-match";
+import { hostMatchesDomain } from "@/lib/url-input";
+import { ProviderUnavailableError, demoDataAllowed, serpApiKey } from "@/lib/provider-status";
+import { demoAIO } from "@/lib/demo-data";
 
 // ─────────────────────────────────────────
 // SerpApi response shape (engine=google + engine=google_ai_overview)
@@ -11,7 +14,7 @@ interface SerpApiTextBlock {
   snippet?: string;
   reference_indexes?: number[];
   list?: SerpApiTextBlock[];        // child blocks for list / expandable
-  table?: string[][];               // 2D array of cells for AI Mode tables
+  table?: string[][];               // 2D array of cells for tables in the AI answer
   code?: string;                    // for code_block
   language?: string;                // for code_block
   title?: string;
@@ -103,20 +106,13 @@ function buildTextOutputs(blocks: SerpApiTextBlock[]): {
 }
 
 /**
- * Production AI signal — SerpApi engine=google_ai_mode (Google's AI Mode).
+ * Google AI Overview via SerpAPI.
  *
- * Single 1-credit call that always returns rich data (text_blocks +
- * references + reconstructed_markdown). Replaces the unreliable two-step
- * AIO flow (engine=google → page_token → engine=google_ai_overview) that
- * frequently returned empty content even after expansion.
- *
- * Historical naming note: this function is still called fetchAIORaw and
- * returns SerpApiAIOverview to avoid churning 50+ call sites. The actual
- * data source is AI Mode. UI labels say "AI Mode".
- *
- * Users who want literal AIO data (the AI summary shown atop classic
- * Google search results, personalized to a real user session) opt into
- * the Chrome extension capture path instead — see git history.
+ * Calls SerpAPI `engine=google` for the query and reads the response's
+ * `ai_overview` block (Google's AI Overview). When Google returns only a
+ * `page_token`, a follow-up `engine=google_ai_overview` call fetches the
+ * block. This is NOT Google AI Mode (`engine=google_ai_mode`), which VSI
+ * does not call. Engine id / label: see src/lib/ai-engines.ts.
  */
 async function fetchAIORaw(
   keyword: string,
@@ -135,14 +131,16 @@ async function fetchAIORaw(
     signal: AbortSignal.timeout(30000),
   });
   if (res.status === 401 || res.status === 403) {
-    throw new Error("SerpAPI authentication error (Invalid or unauthorized API key)");
+    throw new ProviderUnavailableError("serpapi", "PROVIDER_AUTH_FAILED", "SerpAPI authentication error (Invalid or unauthorized API key)");
   }
   if (res.status === 429) {
-    throw new Error("SerpAPI rate limit exceeded");
+    throw new ProviderUnavailableError("serpapi", "PROVIDER_RATE_LIMITED", "SerpAPI rate limit exceeded");
   }
-  if (!res.ok) throw new Error(`SerpApi HTTP status ${res.status}`);
+  if (!res.ok) throw new ProviderUnavailableError("serpapi", "PROVIDER_ERROR", `SerpApi HTTP status ${res.status}`);
 
-  const raw = (await res.json()) as {
+  const raw = (await res.json().catch(() => {
+    throw new ProviderUnavailableError("serpapi", "INVALID_RESPONSE", "SerpAPI returned invalid JSON");
+  })) as {
     ai_overview?: {
       text_blocks?: SerpApiTextBlock[];
       references?: SerpApiReference[];
@@ -156,14 +154,15 @@ async function fetchAIORaw(
 
   if (raw.error) {
     if (typeof raw.error === "string" && (raw.error.includes("Invalid API key") || raw.error.includes("api_key"))) {
-      throw new Error("SerpAPI authentication error (Invalid or unauthorized API key)");
+      throw new ProviderUnavailableError("serpapi", "PROVIDER_AUTH_FAILED", "SerpAPI authentication error (Invalid or unauthorized API key)");
     }
+    // Google genuinely produced no AI answer: a real "no answer" result.
     if (typeof raw.error === "string" && (raw.error.toLowerCase().includes("has not produced") || raw.error.toLowerCase().includes("no results"))) {
       return null;
     }
-    throw new Error(`SerpApi error: ${raw.error}`);
+    throw new ProviderUnavailableError("serpapi", "PROVIDER_ERROR", `SerpApi error: ${raw.error}`);
   }
-  if (raw.search_metadata?.status === "Error") throw new Error("SerpApi AI Mode status=Error");
+  if (raw.search_metadata?.status === "Error") throw new ProviderUnavailableError("serpapi", "PROVIDER_ERROR", "SerpApi search status=Error");
 
   let aiOverview = raw.ai_overview;
 
@@ -214,76 +213,19 @@ export async function fetchAIO(
   brand: string,
   location: Location
 ): Promise<AIOResult> {
-  const key = process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY || process.env.SERPER_API_KEY || process.env.SEARCHAPI_KEY;
+  const key = serpApiKey();
   const cleanDomain = (domain ?? "")
     .toLowerCase()
     .replace(/^[a-z]+:\/+/, "")
     .replace(/^www\./, "")
     .split(/[\/?#]/)[0]
     .replace(/:\d+$/, "");
-  const validClientDomain = cleanDomain.includes(".") && /[a-z]/.test(cleanDomain) ? cleanDomain : "example.com";
-  const brandName = brand || cleanDomain.split(".")[0] || "Client Brand";
+  // An invalid domain can never be "cited": no fallback domain is substituted.
+  const validClientDomain = cleanDomain.includes(".") && /[a-z]/.test(cleanDomain) ? cleanDomain : "";
 
-  if (!key || !key.trim()) {
-    const citations: AIOCitation[] = [
-      {
-        position: 1,
-        sourceName: "industry-leader.com",
-        title: `Top Rated Solutions for ${keyword}`,
-        domain: "industry-leader.com",
-        url: `https://www.industry-leader.com/insights/${encodeURIComponent(keyword.toLowerCase().replace(/\s+/g, "-"))}`,
-        isClient: false,
-        platform: "other",
-      },
-      {
-        position: 2,
-        sourceName: validClientDomain,
-        title: `${brandName} - ${keyword} Official Page`,
-        domain: validClientDomain,
-        url: `https://${validClientDomain}/solutions`,
-        isClient: true,
-        platform: detectPlatform(validClientDomain, validClientDomain),
-      },
-      {
-        position: 3,
-        sourceName: "topservices.com",
-        title: `Best Providers for ${keyword} in 2026`,
-        domain: "topservices.com",
-        url: `https://www.topservices.com/best-${encodeURIComponent(keyword.toLowerCase().replace(/\s+/g, "-"))}`,
-        isClient: false,
-        platform: "other",
-      },
-    ];
-
-    const fullText = `When searching for "${keyword}", top providers offer comprehensive solutions tailored to market demands. Key industry options include Industry Leader, ${brandName}, and Top Services. Recommendations depend on your specific business goals, scale, and feature requirements.`;
-
-    return {
-      keyword,
-      domain,
-      brand,
-      location,
-      aioPresent: true,
-      aioSnippet: fullText,
-      aioFullText: fullText,
-      aioBlocks: [
-        {
-          type: "paragraph",
-          snippet: `When searching for "${keyword}", top providers offer comprehensive solutions tailored to market demands.`,
-        },
-        {
-          type: "list",
-          list: [
-            { snippet: `Industry Leader — Premier choice for enterprise scale.` },
-            { snippet: `${brandName} — Specialized services with verified track record.` },
-            { snippet: `Top Services — Flexible options for growing businesses.` },
-          ],
-        },
-      ],
-      citations,
-      citedDomains: citations.map((c) => c.domain),
-      clientCited: true,
-      mentionedInText: true,
-    };
+  if (!key) {
+    if (demoDataAllowed()) return demoAIO(keyword, domain, brand, location);
+    throw new ProviderUnavailableError("serpapi", "PROVIDER_NOT_CONFIGURED", "Google AI answers need SERPAPI_KEY.");
   }
 
   const loc = LOCATIONS[location];
@@ -312,8 +254,7 @@ export async function fetchAIO(
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
     .map((ref, i) => {
       const citDomain = extractDomain(ref.link);
-      const isClient =
-        !!validClientDomain && (citDomain === validClientDomain || citDomain.endsWith(`.${validClientDomain}`) || validClientDomain.endsWith(`.${citDomain}`));
+      const isClient = !!validClientDomain && hostMatchesDomain(citDomain, validClientDomain);
       return {
         position: i + 1,
         sourceName: ref.source ?? citDomain,
@@ -344,19 +285,9 @@ export async function fetchAIO(
     citedDomains,
     clientCited,
     mentionedInText,
+    // SerpAPI engine=google returns Google's AI Overview block for the query.
+    engine: "google_ai_overview",
+    provider: "serpapi",
   };
-}
-
-// ─────────────────────────────────────────
-// AI Overview (engine=google_ai_overview)
-// ─────────────────────────────────────────
-
-export async function fetchAIOverview(
-  keyword: string,
-  domain: string,
-  brand: string,
-  location: Location,
-): Promise<AIOResult> {
-  return fetchAIO(keyword, domain, brand, location);
 }
 

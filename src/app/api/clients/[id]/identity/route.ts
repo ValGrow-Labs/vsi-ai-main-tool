@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireAgency } from "@/lib/auth";
+import { requireAgencyApi, apiServerError } from "@/lib/auth";
+import { UUID_PATTERN } from "@/lib/project-types";
 import { normaliseDomain } from "@/lib/url-input";
 
 export const dynamic = "force-dynamic";
@@ -9,9 +10,11 @@ export const dynamic = "force-dynamic";
 // the same fields via /api/admin/clients/[id]/identity — that variant
 // skips the agency_id filter so they can fix any tenant.
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+ const session = await requireAgencyApi();
+ if (session instanceof Response) return session;
  try {
  const { id } = await ctx.params;
- const session = await requireAgency();
+ if (!UUID_PATTERN.test(id)) return NextResponse.json({ error: "That project isn't available." }, { status: 404 });
  const body = (await req.json()) as { website?: string; brand_name?: string };
 
  const update: Record<string, unknown> = {};
@@ -51,7 +54,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
  clientQuery = clientQuery.eq("agency_id", session.agencyId);
  }
  const { data: updated, error: cErr } = await clientQuery.select("id");
- if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 });
+ if (cErr) return apiServerError("clients/[id]/identity", cErr);
  if (!updated || updated.length === 0) {
  return NextResponse.json({ error: "Client not found" }, { status: 404 });
  }
@@ -71,9 +74,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
  return NextResponse.json({ ok: true });
  } catch (err) {
- return NextResponse.json(
- { error: err instanceof Error ? err.message : "Failed" },
- { status: 500 }
- );
+ return apiServerError("clients/[id]/identity", err);
  }
 }

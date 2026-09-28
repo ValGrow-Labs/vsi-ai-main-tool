@@ -4,7 +4,17 @@ import { safeFetch, UnsafeUrlError, type SafeFetchResult } from "@/lib/net/safe-
 import { failedPage, parsePage, parseSitemap } from "./parse";
 import { analyzeRobots } from "./robots";
 import { evaluateChecks, scoreChecks } from "./checks";
-import type { AuditOutcome, BrokenLink, PageFacts, SeoSetupInput } from "./types";
+import {
+  auditFailureReason,
+  BLOCKED_STATUSES,
+  canScore,
+  classifyFetchError,
+  computeCoverage,
+  decideAuditStatus,
+  failureMessage,
+  FETCH_FAILURE_TEXT,
+} from "./outcome";
+import type { AuditOutcome, BrokenLink, FetchFailureKind, PageFacts, SeoSetupInput } from "./types";
 
 export class SiteAuditError extends Error {
   constructor(message: string) {
@@ -18,7 +28,9 @@ const MAX_LINKS_TO_VERIFY = 60;
 /** Statuses that mean "restricted", not "broken". */
 const NOT_BROKEN = new Set([401, 403, 405, 429]);
 
-type FetchOutcome = (SafeFetchResult & { responseTimeMs: number }) | { error: string; responseTimeMs: number };
+type FetchOutcome =
+  | (SafeFetchResult & { responseTimeMs: number })
+  | { error: string; kind: FetchFailureKind; responseTimeMs: number };
 
 async function tryFetch(url: string, opts?: Parameters<typeof safeFetch>[1]): Promise<FetchOutcome> {
   const start = Date.now();
@@ -27,9 +39,9 @@ async function tryFetch(url: string, opts?: Parameters<typeof safeFetch>[1]): Pr
     return { ...res, responseTimeMs: Date.now() - start };
   } catch (e) {
     const responseTimeMs = Date.now() - start;
-    if (e instanceof UnsafeUrlError) return { error: e.message, responseTimeMs };
-    const name = e instanceof Error ? e.name : "";
-    return { error: name === "TimeoutError" ? "Timed out" : "Couldn't connect", responseTimeMs };
+    const kind = classifyFetchError(e);
+    if (e instanceof UnsafeUrlError) return { error: e.message, kind, responseTimeMs };
+    return { error: FETCH_FAILURE_TEXT[kind], kind, responseTimeMs };
   }
 }
 
@@ -55,13 +67,22 @@ function pathDepth(url: string): number {
   }
 }
 
-async function loadSitemapUrls(origin: string, declared: string[], siteHost: string): Promise<{ found: boolean; urls: string[] }> {
+async function loadSitemapUrls(
+  origin: string,
+  declared: string[],
+  siteHost: string,
+): Promise<{ found: boolean; checked: boolean; urls: string[] }> {
   const candidates = declared.length > 0 ? declared.slice(0, 2) : [`${origin}/sitemap.xml`];
   const urls: string[] = [];
   let found = false;
+  // "checked" means the site gave a real answer for at least one candidate
+  // (e.g. 404), so a missing sitemap is proven rather than assumed.
+  let checked = false;
   for (const sm of candidates) {
     const res = await tryFetch(sm, { timeoutMs: 8000, maxBytes: 3_000_000 });
-    if ("error" in res || !res.ok) continue;
+    if ("error" in res) continue;
+    if (!BLOCKED_STATUSES.has(res.status) && res.status < 500) checked = true;
+    if (!res.ok) continue;
     found = true;
     const parsed = parseSitemap(res.body);
     urls.push(...parsed.urls);
@@ -77,13 +98,17 @@ async function loadSitemapUrls(origin: string, declared: string[], siteHost: str
       return false;
     }
   });
-  return { found, urls: sameSite };
+  return { found, checked: checked || found, urls: sameSite };
 }
 
 /**
  * Audit a website: homepage + up to 9 more pages (from the sitemap, falling
  * back to homepage links), robots.txt, sitemap, and the internal links found
  * on those pages. Every request goes through safeFetch (public hosts only).
+ *
+ * Never throws for an unreachable site: the result carries an explicit
+ * `status` (completed / partial / failed, see outcome.ts). A failed audit has
+ * no checks and no score. Throws SiteAuditError only for an invalid address.
  */
 export async function runSiteAudit(domainInput: string, seoSetup?: SeoSetupInput): Promise<AuditOutcome> {
   const normalised = normaliseDomain(domainInput);
@@ -93,7 +118,11 @@ export async function runSiteAudit(domainInput: string, seoSetup?: SeoSetupInput
   // Homepage: prefer https, fall back to http.
   let home = await tryFetch(`https://${siteHost}/`);
   if ("error" in home) home = await tryFetch(`http://${siteHost}/`);
-  if ("error" in home) throw new SiteAuditError(`We couldn't reach ${siteHost}. ${home.error.replace(/\.$/, "")}.`);
+  if ("error" in home) {
+    // Nothing answered at all: stop here rather than crawl a dead site.
+    const homePage = failedPage(`https://${siteHost}/`, 0, home.error, home.kind);
+    return failedOutcome(siteHost, [homePage]);
+  }
 
   const homepageUrl = home.url;
   const origin = new URL(homepageUrl).origin;
@@ -108,6 +137,10 @@ export async function runSiteAudit(domainInput: string, seoSetup?: SeoSetupInput
   const robotsRes = await tryFetch(`${origin}/robots.txt`, { timeoutMs: 8000, maxBytes: 500_000 });
   const robotsText = !("error" in robotsRes) && robotsRes.ok && !/html/i.test(robotsRes.contentType) ? robotsRes.body : null;
   const robots = analyzeRobots(robotsText);
+  // A 2xx or a 404/410 is a real answer about robots.txt; a timeout, a refusal
+  // or a server error means we don't know what it says.
+  const robotsChecked =
+    !("error" in robotsRes) && (robotsRes.ok || robotsRes.status === 404 || robotsRes.status === 410);
 
   const sitemap = await loadSitemapUrls(origin, robots.sitemaps, host);
 
@@ -125,11 +158,14 @@ export async function runSiteAudit(domainInput: string, seoSetup?: SeoSetupInput
 
   const others = await mapLimit(picks, 4, async (url): Promise<PageFacts> => {
     const res = await tryFetch(url);
-    if ("error" in res) return failedPage(url, 0, res.error);
+    if ("error" in res) return failedPage(url, 0, res.error, res.kind);
     if (!res.ok || !/html/i.test(res.contentType)) return failedPage(res.url, res.status, null);
     return parsePage(res.body, res.url, res.status, host, res.responseTimeMs);
   });
   const pages = [homeFacts, ...others];
+
+  const coverage = computeCoverage(pages);
+  if (decideAuditStatus(coverage) === "failed") return failedOutcome(siteHost, pages, homepageUrl);
 
   // Verify internal links that weren't already fetched as pages.
   const knownStatus = new Map(pages.map((p) => [p.url.replace(/\/$/, ""), p.status]));
@@ -164,16 +200,39 @@ export async function runSiteAudit(domainInput: string, seoSetup?: SeoSetupInput
     brokenLinks,
     linksChecked: verified.length,
     seoSetup,
+    robotsChecked,
+    sitemapChecked: sitemap.checked,
   });
   return {
+    status: decideAuditStatus(coverage),
     domain: siteHost,
     homepageUrl,
-    score: scoreChecks(checks),
+    score: canScore(coverage) ? scoreChecks(checks) : null,
+    coverage,
+    failure: null,
     pages,
     robots,
     sitemapFound: sitemap.found,
     brokenLinks,
     checks,
+  };
+}
+
+/** No page loaded: no checks, no score, and a reason the user can act on. */
+function failedOutcome(host: string, pages: PageFacts[], homepageUrl = pages[0]?.url ?? `https://${host}/`): AuditOutcome {
+  const reason = auditFailureReason(pages[0]);
+  return {
+    status: "failed",
+    domain: host,
+    homepageUrl,
+    score: null,
+    coverage: computeCoverage(pages),
+    failure: { reason, message: failureMessage(reason, host, pages[0]) },
+    pages,
+    robots: analyzeRobots(null),
+    sitemapFound: false,
+    brokenLinks: [],
+    checks: [],
   };
 }
 

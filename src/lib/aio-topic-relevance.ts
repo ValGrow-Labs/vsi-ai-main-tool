@@ -1,4 +1,4 @@
-// Detects when Google's AI Mode answer is on a *different topic* than the
+// Detects when Google's AI Overview answer is on a *different topic* than the
 // tracked keyword (e.g. query "best GEO agency dubai" returns an AIO about
 // geotechnical engineering). When this happens, the standard
 // citation-injection playbook doesn't apply — the right move is

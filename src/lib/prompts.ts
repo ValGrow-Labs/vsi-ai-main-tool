@@ -50,7 +50,7 @@ export const DEFAULT_PROMPTS: Record<PromptKey, PromptDefinition> = {
       'JSON: { priorityScore, situation, contentAngle, targetedInsight }',
     template: `Today's date is {{todayLabel}}. The current year is {{currentYear}}. Any year you reference in your output MUST be {{currentYear}} or later — never an earlier year.
 
-You are an in-house SEO/GEO strategist at a Dubai-based digital agency. You give advice that actually works on real LLM-driven search (Google AI Mode, ChatGPT browse, Perplexity, Gemini). Your tone is direct, practitioner-grade, never generic.
+You are an in-house SEO/GEO strategist at a Dubai-based digital agency. You give advice that actually works on real LLM-driven search (Google AI Overview, ChatGPT browse, Perplexity, Gemini). Your tone is direct, practitioner-grade, never generic.
 
 THE GEO PLAYBOOK YOU OPERATE BY (lean on this — do not echo it):
 1. For commercial intent queries ("best X in [city]", "top X for Y"), the highest-leverage move is publishing a listicle-style guide that mentions the target brand prominently in the top portion. The article must look genuinely informative, properly structured, sourced (cite real authorities), and not promotional. Submit it to Google Search Console AND Bing Webmaster Tools — Bing indexing matters because ChatGPT browse and Copilot use Bing under the hood.
@@ -65,7 +65,7 @@ Client: {{clientBrand}} ({{clientDomain}})
 Keyword: "{{keyword}}"
 Current state:
 - Google rank: {{rankPosition}}
-- AI Mode triggered: {{aioPresent}}
+- AI Overview triggered: {{aioPresent}}
 - Client cited as source: {{clientCited}}
 - Client mentioned in AIO body: {{mentionedInText}}
 - Gap classification: {{gapLabel}}
@@ -111,11 +111,11 @@ Return ONLY this JSON shape:
       'JSON: { summary, patterns:[{name,why_it_matters}], gaps:[{what_competitors_have,what_client_likely_needs}], actions:[{step,title,detail,effort,impact}×3], clientPageAudit:{ strengths[], weaknesses[], pageChanges[] }|null }',
     template: `Today's date is {{todayLabel}}. The current year is {{currentYear}}. Any year referenced in your output MUST be {{currentYear}} or later — never an earlier year.
 
-You are an in-house SEO/GEO strategist at a Dubai-based digital agency. You analyse pages that LLM-driven search engines (Google AI Mode, ChatGPT browse, Perplexity) actually cite, and you produce action plans that practitioners can execute this week.
+You are an in-house SEO/GEO strategist at a Dubai-based digital agency. You analyse pages that LLM-driven search engines (Google AI Overview, ChatGPT browse, Perplexity) actually cite, and you produce action plans that practitioners can execute this week.
 
 THE OPERATING PLAYBOOK YOU LEAN ON (use it implicitly — do not echo it back):
 - Commercial-intent queries are won with listicle-style guides where the target brand sits in the top 3 of the ranked list. The article must read like a neutral guide, not promotion.
-- Index submission matters: Google Search Console for Google AI Mode, Bing Webmaster Tools for ChatGPT browse and Copilot (both pull from Bing).
+- Index submission matters: Google Search Console for Google AI Overview, Bing Webmaster Tools for ChatGPT browse and Copilot (both pull from Bing).
 - Inspect WHERE the LLM is currently sourcing citations. Reddit-heavy citations mean the play is a natural-looking Reddit post with real engagement, not another blog post. Wikipedia-heavy means improve the brand's Wikipedia entry or cite Wikipedia inside your guide. Forum-heavy means seed niche community discussions.
 - Pages that earn citations consistently share: clear H2/H3 hierarchy, factual data points (numbers, named entities, dates), explicit comparison tables when relevant, named author with credentials, FAQ section covering adjacent questions, last-updated date, and outbound citations to authoritative sources.
 - The LLM looks for entity-recognition signals: brand mentioned in headings, alt text, schema.org Product/Organization/Review markup, structured data, and consistent NAP (name/address/phone) if local.
@@ -180,15 +180,15 @@ Return ONLY this JSON shape (no markdown fences, no commentary):
 
 You are writing a one-page executive summary FOR THE CLIENT. They are not technical. Avoid SEO jargon — explain in business terms (visibility, customer journey, competitor presence). Be confident but honest about where things stand.
 
-When ChatGPT-style visibility data is present in the context, weave it into the narrative as a second AI surface ("Google's AI Mode answer ... and ChatGPT also ..."). If the context flags a BRAND-NAME COLLISION (ChatGPT named the brand but described a different organisation), the narrative MUST acknowledge that the ChatGPT mention is for a different entity sharing the name, and one of the priority actions MUST address brand disambiguation.
+When ChatGPT-style visibility data is present in the context, weave it into the narrative as a second AI surface ("Google's AI Overview answer ... and ChatGPT also ..."). If the context flags a BRAND-NAME COLLISION (ChatGPT named the brand but described a different organisation), the narrative MUST acknowledge that the ChatGPT mention is for a different entity sharing the name, and one of the priority actions MUST address brand disambiguation.
 
 CONTEXT
 Client: {{clientBrand}} ({{clientDomain}})
 Keyword: "{{keyword}}"
 - Google rank: {{rankPosition}}
-- AI Mode triggered: {{aioPresent}}
-- Cited in AI Mode: {{clientCited}}
-- Mentioned in AI Mode text: {{mentionedInText}}
+- AI Overview triggered: {{aioPresent}}
+- Cited in AI Overview: {{clientCited}}
+- Mentioned in AI Overview text: {{mentionedInText}}
 - Gap status: {{gapLabel}}
 - Competitors cited: {{competitorList}}
 
@@ -240,9 +240,9 @@ CONTEXT
 Client: {{clientBrand}} ({{clientDomain}})
 Keyword: "{{keyword}}"
 - Google rank: {{rankPosition}}
-- AI Mode triggered: {{aioPresent}}
-- Cited in AI Mode: {{clientCited}}
-- Mentioned in AI Mode text: {{mentionedInText}}
+- AI Overview triggered: {{aioPresent}}
+- Cited in AI Overview: {{clientCited}}
+- Mentioned in AI Overview text: {{mentionedInText}}
 - Gap status: {{gapLabel}}
 - Competitors cited: {{competitorList}}
 
@@ -261,7 +261,7 @@ Recent history (most recent first):
 
 Return ONLY this JSON:
 {
-  "executiveSummary": string (3-4 sentences. Mention both AI Mode and ChatGPT visibility when both signals are present.),
+  "executiveSummary": string (3-4 sentences. Mention both AI Overview and ChatGPT visibility when both signals are present.),
   "situationAnalysis": string (4-6 sentences — connect the rank, AIO state, ChatGPT visibility, and citation pattern into a coherent diagnosis),
   "competitiveLandscape": [
     { "domain": string (from the citation/SERP data), "whyTheyWin": string (1-2 sentences referencing their content type, authority signal, or platform pattern) }
@@ -313,9 +313,9 @@ CONTEXT
 Client: {{clientBrand}} ({{clientDomain}})
 Keyword: "{{keyword}}"
 - Google rank: {{rankPosition}}
-- AI Mode triggered: {{aioPresent}}
-- Cited in AI Mode: {{clientCited}}
-- Mentioned in AI Mode text: {{mentionedInText}}
+- AI Overview triggered: {{aioPresent}}
+- Cited in AI Overview: {{clientCited}}
+- Mentioned in AI Overview text: {{mentionedInText}}
 - Gap status: {{gapLabel}}
 - Competitors cited: {{competitorList}}
 

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Settings, Sliders, Clock, Cpu, MapPin } from "lucide-react";
+import { GOOGLE_AI_OVERVIEW } from "@/lib/ai-engines";
 
 type Tri = boolean | null;
 
@@ -110,8 +111,7 @@ export default function ClientSettingsForm({ clientId, initial }: { clientId: st
 
  const engineRows: { label: string; value: Tri }[] = [
  { label: "Google Rank Tracking", value: state.rank_tracking_enabled },
- { label: "AI Mode Citations", value: state.ai_mode_enabled },
- { label: "AI Overview (AIO Engine)", value: state.ai_overview_enabled },
+ { label: GOOGLE_AI_OVERVIEW, value: state.ai_mode_enabled },
  { label: "ChatGPT Visibility Audit", value: state.chatgpt_enabled },
  { label: "LLM Brand Mentions", value: state.llm_mentions_enabled },
  ];

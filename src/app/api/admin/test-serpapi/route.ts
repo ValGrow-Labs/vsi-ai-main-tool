@@ -1,5 +1,11 @@
 import { adminApiSession } from "@/lib/admin/api";
 import { NextRequest, NextResponse } from "next/server";
+import { logProviderError, safeProviderMessage } from "@/lib/provider-response";
+
+/** Strip anything that looks like a credential from text shown to the admin. */
+function redact(text: string): string {
+ return text.replace(/(api[_-]?key|key|token)=([^&\s"']+)/gi, "$1=[redacted]");
+}
 
 export const maxDuration = 120;
 export const dynamic = "force-dynamic";
@@ -30,11 +36,13 @@ async function fire(url: string): Promise<{ status: number; body: Record<string,
  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
  return { status: res.status, body: json, tookMs: took };
  } catch (e) {
+ logProviderError("admin/test-serpapi", e);
  return {
  status: 0,
  body: {},
  tookMs: Date.now() - started,
- error: e instanceof Error ? e.message : String(e),
+ // Fixed text: a fetch error can echo the request URL, which carries the api_key.
+ error: safeProviderMessage(e),
  };
  }
 }
@@ -45,7 +53,7 @@ function trim(body: Record<string, unknown>): SerpApiBody {
  text_blocks: body.text_blocks,
  references: body.references,
  reconstructed_markdown: body.reconstructed_markdown,
- error: typeof body.error === "string" ? body.error : undefined,
+ error: typeof body.error === "string" ? redact(body.error) : undefined,
  search_metadata: body.search_metadata as { status?: string } | undefined,
  };
 }
@@ -71,7 +79,8 @@ export async function POST(req: NextRequest) {
  const { keyword, gl = "ae", hl = "en" } = (await req.json()) as { keyword?: string; gl?: string; hl?: string };
  if (!keyword) return NextResponse.json({ error: "keyword required" }, { status: 400 });
 
- // Production-only signal — AI Mode. AIO has been retired from the pipeline.
+ // Diagnostic only: SerpAPI's Google AI Mode engine. The check pipeline does
+ // not use it — it uses engine=google (Google AI Overview, see ai-engines.ts).
  const aiModeResult = await runAIMode(keyword, gl, hl, apiKey);
 
  return NextResponse.json({

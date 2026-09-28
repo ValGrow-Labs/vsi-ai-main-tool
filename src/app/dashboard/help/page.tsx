@@ -37,6 +37,8 @@ export default function HelpCenterPage() {
   const [contactSubject, setContactSubject] = useState("");
   const [contactMessage, setContactMessage] = useState("");
   const [ticketSent, setTicketSent] = useState(false);
+  const [ticketSending, setTicketSending] = useState(false);
+  const [ticketError, setTicketError] = useState<string | null>(null);
 
   const categories = [
     {
@@ -314,13 +316,39 @@ export default function HelpCenterPage() {
     return matchesCategory && matchesSearch;
   });
 
-  const handleSendTicket = (e: React.FormEvent) => {
+  // Support requests are stored in the product feedback inbox (the feedback table), which the
+  // VSI team reads in the admin area. There is no email delivery and no promised response time.
+  const handleSendTicket = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!contactSubject.trim() || !contactMessage.trim()) return;
-    setTicketSent(true);
-    setContactSubject("");
-    setContactMessage("");
-    setTimeout(() => setTicketSent(false), 5000);
+    if (!contactSubject.trim() || !contactMessage.trim() || ticketSending) return;
+    setTicketSending(true);
+    setTicketError(null);
+    setTicketSent(false);
+    try {
+      const res = await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category: "question",
+          subject: contactSubject.trim(),
+          message: contactMessage.trim(),
+          page_url: "/dashboard/help",
+          context_data: { submitted_from: "help_contact_support" },
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "Your request wasn't sent. Please try again.");
+      }
+      setTicketSent(true);
+      setContactSubject("");
+      setContactMessage("");
+      setTimeout(() => setTicketSent(false), 8000);
+    } catch (err) {
+      setTicketError(err instanceof Error ? err.message : "Your request wasn't sent. Please try again.");
+    } finally {
+      setTicketSending(false);
+    }
   };
 
   return (
@@ -475,7 +503,13 @@ export default function HelpCenterPage() {
               {ticketSent && (
                 <div className="p-4 rounded-panel bg-positive-soft border border-positive/30 dark:border-positive/30 text-positive dark:text-positive text-caption font-semibold flex items-center gap-2">
                   <CheckCircle2 size={16} />
-                  <span>Support request submitted! We will respond to your email within 2-4 hours.</span>
+                  <span>Your request was saved to the VSI team&apos;s inbox. You can find it under Feedback &rarr; Your feedback.</span>
+                </div>
+              )}
+              {ticketError && (
+                <div role="alert" className="p-4 rounded-panel bg-critical/10 border border-critical/20 text-critical text-caption font-semibold flex items-center gap-2">
+                  <AlertCircle size={16} />
+                  <span>{ticketError}</span>
                 </div>
               )}
 
@@ -511,10 +545,11 @@ export default function HelpCenterPage() {
                 <div className="flex items-center justify-end">
                   <button
                     type="submit"
-                    className="px-6 py-2.5 rounded-panel bg-ink hover:bg-ink-2 text-white text-caption font-semibold transition-colors cursor-pointer flex items-center gap-2"
+                    disabled={ticketSending}
+                    className="px-6 py-2.5 rounded-panel bg-ink hover:bg-ink-2 text-white text-caption font-semibold transition-colors cursor-pointer flex items-center gap-2 disabled:opacity-60"
                   >
                     <Send size={13} />
-                    <span>Send Support Ticket</span>
+                    <span>{ticketSending ? "Sending…" : "Send Support Ticket"}</span>
                   </button>
                 </div>
               </form>

@@ -18,7 +18,7 @@ let insertError: { code?: string; message?: string } | null = null;
 let deleteResult: unknown[] = [{ id: "kw-1" }];
 
 vi.mock("@/lib/auth", () => ({
-  requireAgency: async () => mockSession,
+  requireAgencyApi: async () => mockSession,
 }));
 
 vi.mock("@/lib/supabase/server", () => ({

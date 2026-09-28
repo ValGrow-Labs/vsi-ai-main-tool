@@ -27,7 +27,7 @@ describe("competitors", () => {
           chatgpt_checked: false, chatgpt_brand_mentioned: null, chatgpt_brand_cited: null, chatgpt_competitors: null, chatgpt_cited_urls: null,
         },
       ],
-      { domain: "example.com", enabled: { google_ai_mode: true, chatgpt: true, ai_overviews: false } },
+      { domain: "example.com", enabled: { google_ai_overview: true, chatgpt: true } },
     );
     const merged = mergeCompetitors(geo, google);
     expect(merged.map((m) => m.domain)).toEqual(["rival.com", "other.com"]);

@@ -22,14 +22,35 @@ create table if not exists public.analysis_jobs (
 create index if not exists idx_analysis_jobs_client_created
   on public.analysis_jobs (client_id, created_at desc);
 
+-- Amended before first apply: at most one running analysis per project, across
+-- all server instances. A second concurrent start fails with 23505, which the
+-- /api/jobs/analysis route answers with 409 already_running (each analysis
+-- makes paid search/AI calls, so duplicates cost money).
+create unique index if not exists analysis_jobs_one_running_per_client
+  on public.analysis_jobs (client_id)
+  where status = 'in_progress';
+
 alter table public.analysis_jobs enable row level security;
 
+-- Amended 2026-09-27 BEFORE first apply (this file had never been applied anywhere):
+-- the original policy checked only agency_id, so a member could insert a job for
+-- their own agency that points at another organization's client_id, and a
+-- disabled account kept access. The policy below is self-contained (it does not
+-- depend on helpers from 043), so it is safe whichever of 040/043 runs first.
+-- Migration 043 later replaces it with the shared public.current_agency_id()
+-- helper and adds the tenant-consistency trigger when this table exists.
 drop policy if exists "analysis_jobs_agency_all" on public.analysis_jobs;
 create policy "analysis_jobs_agency_all"
   on public.analysis_jobs for all
   to authenticated
-  using (agency_id = (select agency_id from public.profiles where id = auth.uid()))
-  with check (agency_id = (select agency_id from public.profiles where id = auth.uid()));
+  using (agency_id = (select p.agency_id from public.profiles p
+                       where p.id = auth.uid() and not coalesce(p.is_disabled, false)))
+  with check (
+    agency_id = (select p.agency_id from public.profiles p
+                  where p.id = auth.uid() and not coalesce(p.is_disabled, false))
+    and exists (select 1 from public.clients c
+                 where c.id = client_id and c.agency_id = analysis_jobs.agency_id)
+  );
 
 drop policy if exists "analysis_jobs_super_admin_all" on public.analysis_jobs;
 create policy "analysis_jobs_super_admin_all"

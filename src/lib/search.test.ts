@@ -7,6 +7,7 @@ const r = (id: string, keyword: string, created_at: string, rank_position: numbe
   created_at,
   rank_position,
   rank_url: rank_position ? `https://example.com/${id}` : null,
+  rank_status: rank_position === null ? "not_found" : "found",
 });
 
 const rows: RankRow[] = [

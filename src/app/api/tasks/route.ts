@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireAgency } from "@/lib/auth";
+import { requireAgencyApi, apiServerError } from "@/lib/auth";
+import { UUID_PATTERN } from "@/lib/project-types";
 import type { TaskGroup, TaskOwner, TaskEffort, TaskImpact, AcceptanceCriterion, TaskContextSnapshot } from "@/lib/tasks";
 
 export const dynamic = "force-dynamic";
@@ -39,12 +40,20 @@ interface CreatePayload {
 }
 
 export async function POST(req: NextRequest) {
+ const session = await requireAgencyApi();
+ if (session instanceof Response) return session;
  try {
- const session = await requireAgency();
  const supabase = await createClient();
  const body = (await req.json()) as CreatePayload;
 
  if (!body.client_id || !body.title || !body.group_name) {
+ return NextResponse.json({ error: "client_id, title, group_name are required" }, { status: 400 });
+ }
+ if (
+ typeof body.client_id !== "string" || !UUID_PATTERN.test(body.client_id) ||
+ typeof body.title !== "string" ||
+ (body.tracked_keyword_id != null && (typeof body.tracked_keyword_id !== "string" || !UUID_PATTERN.test(body.tracked_keyword_id)))
+ ) {
  return NextResponse.json({ error: "client_id, title, group_name are required" }, { status: 400 });
  }
 
@@ -59,6 +68,17 @@ export async function POST(req: NextRequest) {
  return NextResponse.json({ error: "Client not found" }, { status: 404 });
  }
  const owningAgencyId = (clientRow.agency_id as string) ?? session.agencyId;
+
+ // The search the task is about must belong to this project (never another project's or tenant's).
+ if (body.tracked_keyword_id) {
+ const { data: kwRow } = await supabase
+ .from("tracked_keywords")
+ .select("id")
+ .eq("id", body.tracked_keyword_id)
+ .eq("client_id", body.client_id)
+ .maybeSingle();
+ if (!kwRow) return NextResponse.json({ error: "Search not found" }, { status: 404 });
+ }
 
  const snapshot = await snapshotFor(supabase, body.tracked_keyword_id ?? null);
 
@@ -83,10 +103,10 @@ export async function POST(req: NextRequest) {
  .single();
 
  if (error || !data) {
- return NextResponse.json({ error: error?.message ?? "Failed to create task" }, { status: 500 });
+ return apiServerError("tasks", error);
  }
  return NextResponse.json(data);
  } catch (e) {
- return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
+ return apiServerError("tasks", e);
  }
 }

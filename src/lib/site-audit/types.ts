@@ -1,6 +1,26 @@
-export type CheckStatus = "pass" | "warning" | "fail";
+/**
+ * `not_checked`: VSI couldn't gather the data this check needs (pages didn't
+ * load, homepage unavailable, nothing configured to compare against). It is
+ * never a pass: it adds no penalty and no credit to the score, and never
+ * becomes a Next Action.
+ */
+export type CheckStatus = "pass" | "warning" | "fail" | "not_checked";
 export type Impact = "high" | "medium" | "low";
 
+/**
+ * Outcome of a whole audit run.
+ * - completed: the homepage and most pages loaded; every check is meaningful.
+ * - partial: some pages loaded, but the homepage didn't or VSI couldn't fetch a
+ *   large share of pages. Checks that need missing data are `not_checked`.
+ * - failed: no page loaded at all. No checks, no score.
+ */
+export type AuditStatus = "completed" | "partial" | "failed";
+
+/** Why VSI itself couldn't fetch a page (not the website's fault). */
+export type FetchFailureKind = "timeout" | "dns" | "network" | "unsafe";
+
+/** Why a failed audit couldn't load any page. */
+export type AuditFailureReason = FetchFailureKind | "blocked" | "site_error" | "not_html";
 export type CheckId =
   | "https"
   | "ai_crawlers"
@@ -30,6 +50,8 @@ export interface PageFacts {
   status: number;
   /** Set when the page couldn't be fetched at all (timeout, DNS, blocked). */
   fetchError: string | null;
+  /** Classification of `fetchError`. Absent on audits stored before it existed. */
+  fetchErrorKind?: FetchFailureKind | null;
   isHtml: boolean;
   title: string | null;
   metaDescription: string | null;
@@ -83,10 +105,31 @@ export interface CheckResult {
   detail: Record<string, string | number | boolean | string[] | null>;
 }
 
+/** How much of the site VSI could actually read. */
+export interface AuditCoverage {
+  pagesAttempted: number;
+  /** HTML pages that returned a success status: the only pages per-page checks use. */
+  pagesLoaded: number;
+  homepageLoaded: boolean;
+  /** HTTP 4xx/5xx returned by the website (except 401/403/429). Real page errors. */
+  siteErrors: number;
+  /** 401/403/429: the website refused VSI's crawler. Not counted as page errors. */
+  blocked: number;
+  /** Timeouts, DNS and network failures on VSI's side. Not counted as page errors. */
+  fetchFailures: number;
+  /** Responded, but not with a web page (e.g. PDF, JSON). */
+  notHtml: number;
+}
+
 export interface AuditOutcome {
+  status: AuditStatus;
   domain: string;
   homepageUrl: string;
-  score: number;
+  /** Null when there wasn't enough loaded data to score (see scorePolicy in run.ts). */
+  score: number | null;
+  coverage: AuditCoverage;
+  /** Set only when status is "failed". */
+  failure: { reason: AuditFailureReason; message: string } | null;
   pages: PageFacts[];
   robots: RobotsFacts;
   sitemapFound: boolean;

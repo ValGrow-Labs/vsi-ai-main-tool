@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
+import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { QA_SECTIONS } from "@/lib/qa-checklist";
 import QALogin from "@/components/QALogin";
 import QAChecklistAttributed from "@/components/QAChecklistAttributed";
+import { QA_COOKIE, qaEnabled, verifyQaToken } from "@/lib/qa-session";
 
 export const metadata: Metadata = {
  title: "VSI QA Checklist",
@@ -13,8 +15,11 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function PublicQAPage() {
+ // Internal testing aid: off unless VSI_QA_ENABLED=true (see lib/qa-session).
+ if (!qaEnabled()) notFound();
  const c = await cookies();
- const testerId = c.get("vsi_qa_tester")?.value;
+ // The signed cookie names the tester; a forged, tampered or expired one is ignored.
+ const testerId = verifyQaToken(c.get(QA_COOKIE)?.value);
 
  let tester: { id: string; name: string } | null = null;
  const savedChecks: Record<string, { status: string; notes: string | null; updated_at: string }> = {};

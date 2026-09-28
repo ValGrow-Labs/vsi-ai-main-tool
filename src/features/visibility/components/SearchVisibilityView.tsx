@@ -33,9 +33,11 @@ export interface SearchViewData {
 
 function changeLabel(s: RankedSearch): { text: string; tone: "up" | "down" | "flat" | "none" } {
   if (s.previous === null && s.position !== null && s.history.length <= 1) return { text: "First check", tone: "none" };
-  if (s.change === null) return { text: "No change", tone: "flat" };
-  if (s.change > 0) return { text: s.previous === null ? "Now ranking" : `Up ${s.change}`, tone: "up" };
-  if (s.change < 0) return { text: s.position === null ? "Dropped out" : `Down ${Math.abs(s.change)}`, tone: "down" };
+  if (s.movement === "entered") return { text: "Now ranking", tone: "up" };
+  if (s.movement === "dropped_out") return { text: "Dropped out", tone: "down" };
+  if (s.change === null) return { text: s.history.length <= 1 ? "First check" : "No change", tone: s.history.length <= 1 ? "none" : "flat" };
+  if (s.change > 0) return { text: `Up ${s.change}`, tone: "up" };
+  if (s.change < 0) return { text: `Down ${Math.abs(s.change)}`, tone: "down" };
   return { text: "No change", tone: "flat" };
 }
 

@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
-import { requireAgency } from "@/lib/auth";
+import { requireAgencyApi } from "@/lib/auth";
 import { PROJECT_COOKIE, UUID_PATTERN } from "@/lib/project-types";
 
 export const dynamic = "force-dynamic";
 
 /** Switch the active project. The server checks access before storing it. */
 export async function POST(req: NextRequest) {
-  const session = await requireAgency();
+  const session = await requireAgencyApi();
+  if (session instanceof Response) return session;
 
   let projectId: unknown;
   try {

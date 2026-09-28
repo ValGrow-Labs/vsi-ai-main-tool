@@ -104,7 +104,8 @@ export default function ComposeModal({ isOpen, onClose, replyTo, draftData }: Co
         attachments: attachedFiles,
       });
 
-      if (savedId && !draftId) {
+      // Adopt the server's id (a new draft, or one re-created after it went missing).
+      if (savedId && savedId !== draftId) {
         setDraftId(savedId);
       }
       setLastSavedTimeStr(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));

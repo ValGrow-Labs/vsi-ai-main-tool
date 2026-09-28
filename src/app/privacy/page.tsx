@@ -29,7 +29,7 @@ export default function PrivacyPage() {
  </li>
  <li>
  <strong>Search result snapshots:</strong> data captured from
- public Google search pages — rank positions, AI Mode
+ public Google search pages — rank positions, AI Overview
  answers, cited URLs, and SERP titles.
  </li>
  </ul>
@@ -38,7 +38,7 @@ export default function PrivacyPage() {
  <ul className="list-disc pl-5 space-y-1">
  <li>We do not sell any data to third parties.</li>
  <li>We do not share your data with other agencies on the platform.</li>
- <li>We do not use your data to train AI models.</li>
+ <li>We do not use your data to train AI Overviewls.</li>
  <li>We do not place advertising cookies.</li>
  </ul>
 

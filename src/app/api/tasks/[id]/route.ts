@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireAgency } from "@/lib/auth";
+import { requireAgencyApi, apiServerError } from "@/lib/auth";
+import { UUID_PATTERN } from "@/lib/project-types";
 import { track } from "@/lib/track";
 import type { TaskStatus, AcceptanceCriterion } from "@/lib/tasks";
 
@@ -19,9 +20,11 @@ interface PatchPayload {
 }
 
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+ const session = await requireAgencyApi();
+ if (session instanceof Response) return session;
  try {
  const { id } = await ctx.params;
- const session = await requireAgency();
+ if (!UUID_PATTERN.test(id)) return NextResponse.json({ error: "Task not found" }, { status: 404 });
  const supabase = await createClient();
  const body = (await req.json()) as PatchPayload;
 
@@ -54,11 +57,11 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
  .update(patch)
  .eq("id", id);
  if (session.role !== "super_admin") q = q.eq("agency_id", session.agencyId);
- const { data, error } = await q.select("*").single();
+ const { data, error } = await q.select("*").maybeSingle();
 
- if (error || !data) {
- return NextResponse.json({ error: error?.message ?? "Failed to update task" }, { status: 500 });
- }
+ if (error) return apiServerError("tasks/[id]", error);
+ // Not found, or another organization's task: the same answer, so its existence isn't confirmed.
+ if (!data) return NextResponse.json({ error: "Task not found" }, { status: 404 });
  if (body.status !== undefined) {
  track({
  agencyId: (data.agency_id as string) ?? session.agencyId,
@@ -69,14 +72,16 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
  }
  return NextResponse.json(data);
  } catch (e) {
- return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
+ return apiServerError("tasks/[id]", e);
  }
 }
 
 export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+ const session = await requireAgencyApi();
+ if (session instanceof Response) return session;
  try {
  const { id } = await ctx.params;
- const session = await requireAgency();
+ if (!UUID_PATTERN.test(id)) return NextResponse.json({ error: "Task not found" }, { status: 404 });
  const supabase = await createClient();
 
  let q = supabase
@@ -84,10 +89,11 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: str
  .delete()
  .eq("id", id);
  if (session.role !== "super_admin") q = q.eq("agency_id", session.agencyId);
- const { error } = await q;
- if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+ const { data: deleted, error } = await q.select("id");
+ if (error) return apiServerError("tasks/[id]", error);
+ if (!deleted || deleted.length === 0) return NextResponse.json({ error: "Task not found" }, { status: 404 });
  return NextResponse.json({ ok: true });
  } catch (e) {
- return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
+ return apiServerError("tasks/[id]", e);
  }
 }

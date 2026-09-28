@@ -1,7 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { Settings, Palette, Mail, FileText, Globe, Save, Building2, Check, Upload, Shield, Bell, CreditCard, ChevronRight, Link2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import Image from "next/image";
+import { Settings, Palette, Mail, FileText, Save, Building2, Check, Upload, Shield, Bell, CreditCard, ChevronRight, Loader2 } from "lucide-react";
+import { changedAgencySettings, type AgencySettingsResponse } from "@/lib/agency-settings";
 
 const SECTIONS = [
   { id: "branding", label: "Agency Branding", icon: Palette, desc: "Logo, colors & display name" },
@@ -11,30 +14,99 @@ const SECTIONS = [
   { id: "billing", label: "Billing", icon: CreditCard, desc: "Plan and usage" },
 ];
 
+const NOT_AVAILABLE = "Not available";
+
+type Form = { display_name: string; primary_color: string; support_email: string; report_footer: string };
+
+const toForm = (org: AgencySettingsResponse["organization"]): Form => ({
+  display_name: org.display_name ?? "",
+  primary_color: org.primary_color ?? "",
+  support_email: org.support_email ?? "",
+  report_footer: org.report_footer ?? "",
+});
+
+function roleLabel(role: string | undefined): string {
+  if (role === "super_admin") return "Platform admin";
+  if (role === "pilot") return "Member";
+  return role ?? NOT_AVAILABLE;
+}
+
+function planLabel(isPilot: boolean | null | undefined): string {
+  if (isPilot === true) return "Pilot";
+  if (isPilot === false) return "Not on the pilot plan";
+  return NOT_AVAILABLE;
+}
+
+function fmt(n: number | null | undefined): string {
+  return typeof n === "number" ? n.toLocaleString() : NOT_AVAILABLE;
+}
+
 export default function AgencySettingsPage() {
   const [activeSection, setActiveSection] = useState("branding");
+  const [data, setData] = useState<AgencySettingsResponse | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [form, setForm] = useState<Form>({ display_name: "", primary_color: "", support_email: "", report_footer: "" });
+  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  const [form, setForm] = useState({
-    legal_name: "ValGrow Digital",
-    display_name: "ValGrow Digital",
-    logo_url: "",
-    primary_color: "var(--brand)",
-    support_email: "support@valgrow.com",
-    report_footer: "© 2025 ValGrow Digital. All rights reserved.",
-    notif_email: true,
-    notif_weekly: true,
-    notif_tasks: false,
-  });
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/agency/settings?include=usage", { cache: "no-store" });
+        const json = (await res.json().catch(() => ({}))) as Partial<AgencySettingsResponse> & { error?: string };
+        if (!res.ok || !json.ok || !json.organization) throw new Error(json.error || "Couldn't load your organization.");
+        if (cancelled) return;
+        setData(json as AgencySettingsResponse);
+        setForm(toForm(json.organization));
+      } catch (err) {
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : "Couldn't load your organization.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const update = (key: string, val: string | boolean) => setForm(f => ({ ...f, [key]: val }));
+  const update = (key: keyof Form, val: string) => setForm(f => ({ ...f, [key]: val }));
 
-  const handleSave = () => {
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+  const org = data?.organization;
+  const canSave = !!data && data.mode === "database" && data.canEdit;
+
+  const handleSave = async () => {
+    if (!data || !canSave || saving) return;
+    setSaving(true);
+    setSaveError(null);
+    setSaved(false);
+    try {
+      const changes = changedAgencySettings(toForm(data.organization), form);
+      if (Object.keys(changes).length === 0) {
+        setSaveError("There are no changes to save.");
+        return;
+      }
+      const res = await fetch("/api/agency/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(changes),
+      });
+      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!res.ok || !json.ok) throw new Error(json.error || "Your changes weren't saved. Please try again.");
+      setData({ ...data, organization: { ...data.organization, ...changes } });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Your changes weren't saved. Please try again.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const activeInfo = SECTIONS.find(s => s.id === activeSection);
+  const previewColor = form.primary_color || "var(--brand)";
+  const displayName = form.display_name || org?.name || "";
+  const keywordsUsed = data?.usage?.activeKeywords;
+  const keywordCap = org?.maxKeywords;
 
   return (
     <div className="min-h-[calc(100vh-60px)] bg-canvas p-3 sm:p-6 font-sans text-ink">
@@ -87,22 +159,43 @@ export default function AgencySettingsPage() {
                 <p className="text-body text-ink-3 mt-0.5">{activeInfo?.desc}</p>
               </div>
 
+              {!data && !loadError && (
+                <p className="flex items-center gap-2 text-body text-ink-3">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Loading your organization…
+                </p>
+              )}
+              {loadError && (
+                <p role="alert" className="text-body text-critical">
+                  {loadError} Nothing on this page can be shown or saved until it loads.
+                </p>
+              )}
+              {data?.mode === "local" && (
+                <p className="text-caption text-ink-3">Local development session: there is no database, so these values aren&apos;t a real organization&apos;s and can&apos;t be saved here.</p>
+              )}
+              {data?.mode === "database" && !data.canEdit && ["branding", "email"].includes(activeSection) && (
+                <p className="text-caption text-ink-3">You can view these settings, but only a platform admin can change them.</p>
+              )}
+
               {/* ── BRANDING ── */}
-              {activeSection === "branding" && (
+              {data && activeSection === "branding" && (
                 <div className="space-y-6">
                   {/* Logo */}
                   <div>
                     <label className="block text-caption font-semibold text-ink-3 mb-3">Logo</label>
                     <div className="flex items-center gap-4">
-                      <div className="w-20 h-20 rounded-panel bg-surface-2 border border-line flex items-center justify-center">
-                        <span className="text-3xl font-semibold text-brand-strong">V</span>
+                      <div className="w-20 h-20 rounded-panel bg-surface-2 border border-line flex items-center justify-center overflow-hidden">
+                        {org?.logo_url ? (
+                          <Image src={org.logo_url} alt="Your logo" width={72} height={72} className="h-full w-full object-contain p-1" unoptimized />
+                        ) : (
+                          <span className="text-3xl font-semibold text-brand-strong">{displayName.charAt(0).toUpperCase()}</span>
+                        )}
                       </div>
                       <div className="space-y-2">
-                        <button className="flex items-center gap-2 bg-surface-2 border border-line hover:border-line text-ink text-body font-semibold px-4 py-2.5 rounded-panel transition-colors cursor-pointer">
+                        <Link href="/dashboard/settings" className="flex items-center gap-2 bg-surface-2 border border-line hover:border-line text-ink text-body font-semibold px-4 py-2.5 rounded-panel transition-colors cursor-pointer">
                           <Upload className="w-4 h-4 text-brand-strong" />
-                          Upload logo
-                        </button>
-                        <p className="text-caption text-ink-3">PNG, JPG up to 2MB. Recommended: 200×200px</p>
+                          Change logo in Settings
+                        </Link>
+                        <p className="text-caption text-ink-3">{org?.logo_url ? "Your uploaded logo." : "No logo uploaded yet."}</p>
                       </div>
                     </div>
                   </div>
@@ -112,10 +205,11 @@ export default function AgencySettingsPage() {
                     <div>
                       <label className="block text-caption font-semibold text-ink mb-2">Legal Name</label>
                       <input
-                        value={form.legal_name}
-                        onChange={e => update("legal_name", e.target.value)}
+                        value={org?.name ?? ""}
+                        readOnly
+                        disabled
                         className="w-full bg-canvas border border-line focus:border-line-strong rounded-panel px-4 py-3 text-body text-ink placeholder:text-ink-3/70 focus:outline-none transition-colors"
-                        placeholder="Your Agency LLC"
+                        placeholder={NOT_AVAILABLE}
                       />
                     </div>
                     <div>
@@ -123,8 +217,9 @@ export default function AgencySettingsPage() {
                       <input
                         value={form.display_name}
                         onChange={e => update("display_name", e.target.value)}
+                        disabled={!canSave}
                         className="w-full bg-canvas border border-line focus:border-line-strong rounded-panel px-4 py-3 text-body text-ink placeholder:text-ink-3/70 focus:outline-none transition-colors"
-                        placeholder="My Agency"
+                        placeholder={org?.name ?? "Not set"}
                       />
                     </div>
                   </div>
@@ -136,8 +231,9 @@ export default function AgencySettingsPage() {
                       <div className="relative">
                         <input
                           type="color"
-                          value={form.primary_color}
+                          value={/^#[0-9A-Fa-f]{6}$/.test(form.primary_color) ? form.primary_color : "#000000"}
                           onChange={e => update("primary_color", e.target.value)}
+                          disabled={!canSave}
                           className="w-12 h-12 rounded-panel cursor-pointer border border-line p-1 bg-canvas"
                           style={{ appearance: "none" }}
                         />
@@ -145,11 +241,12 @@ export default function AgencySettingsPage() {
                       <input
                         value={form.primary_color}
                         onChange={e => update("primary_color", e.target.value)}
+                        disabled={!canSave}
                         className="w-36 bg-canvas border border-line focus:border-line-strong rounded-panel px-4 py-3 text-body text-ink focus:outline-none transition-colors"
-                        placeholder="#FF4500"
+                        placeholder="Not set"
                       />
                       <div className="flex-1 bg-surface-2 border border-line rounded-panel p-3">
-                        <p className="text-caption text-ink-3">Used in client-facing reports, PDF exports, and email templates</p>
+                        <p className="text-caption text-ink-3">Used in client-facing reports</p>
                       </div>
                     </div>
                   </div>
@@ -158,12 +255,12 @@ export default function AgencySettingsPage() {
                   <div className="bg-surface-2/50 border border-line rounded-panel p-5">
                     <p className="text-caption font-semibold text-ink-3 mb-3">Preview - Report Header</p>
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-panel flex items-center justify-center font-semibold text-xl text-white" style={{ backgroundColor: form.primary_color }}>
-                        {form.display_name.charAt(0) || "A"}
+                      <div className="w-10 h-10 rounded-panel flex items-center justify-center font-semibold text-xl text-white" style={{ backgroundColor: previewColor }}>
+                        {displayName.charAt(0).toUpperCase()}
                       </div>
                       <div>
-                        <p className="text-body font-semibold text-ink">{form.display_name || "Your Agency"}</p>
-                        <p className="text-caption font-semibold" style={{ color: form.primary_color }}>SearchIntel Report</p>
+                        <p className="text-body font-semibold text-ink">{displayName || "Your organization"}</p>
+                        <p className="text-caption font-semibold" style={{ color: previewColor }}>SearchIntel Report</p>
                       </div>
                     </div>
                   </div>
@@ -171,7 +268,7 @@ export default function AgencySettingsPage() {
               )}
 
               {/* ── ACCOUNT ── */}
-              {activeSection === "account" && (
+              {data && activeSection === "account" && (
                 <div className="space-y-5">
                   <div className="bg-positive/10 border border-positive/30 rounded-panel p-5 flex items-center justify-between">
                     <div className="flex items-center gap-4">
@@ -179,18 +276,22 @@ export default function AgencySettingsPage() {
                         <Shield className="w-6 h-6 text-positive" />
                       </div>
                       <div>
-                        <p className="text-base font-semibold text-ink">Pilot Plan</p>
-                        <p className="text-caption text-ink-3 mt-0.5">Unlimited keywords · Full feature access · Priority support</p>
+                        <p className="text-base font-semibold text-ink">{planLabel(org?.isPilot)}</p>
+                        <p className="text-caption text-ink-3 mt-0.5">
+                          {typeof keywordCap === "number" ? `Up to ${keywordCap.toLocaleString()} tracked keywords` : "Keyword limit not available"}
+                          {" · "}
+                          {typeof org?.maxClients === "number" ? `Up to ${org.maxClients.toLocaleString()} clients` : data.mode === "database" ? "No client limit" : "Client limit not available"}
+                        </p>
                       </div>
                     </div>
                     <span className="px-3 py-1 rounded-control bg-positive/20 border border-positive/30 text-positive text-caption font-semibold">Active</span>
                   </div>
 
                   {[
-                    { label: "Agency ID", value: "00000000-0000-0000-0000-000000000001", mono: true },
-                    { label: "User Email", value: "admin@example.com", mono: false },
-                    { label: "User Role", value: "Super Admin", mono: false },
-                    { label: "Max Keywords", value: "1,000", mono: false },
+                    { label: "Agency ID", value: org?.id ?? NOT_AVAILABLE, mono: true },
+                    { label: "User Email", value: data.user.email || NOT_AVAILABLE, mono: false },
+                    { label: "User Role", value: roleLabel(data.user.role), mono: false },
+                    { label: "Max Keywords", value: fmt(keywordCap), mono: false },
                   ].map(({ label, value, mono }) => (
                     <div key={label}>
                       <label className="block text-caption font-semibold text-ink-3 mb-2">{label}</label>
@@ -203,8 +304,9 @@ export default function AgencySettingsPage() {
               )}
 
               {/* ── NOTIFICATIONS ── */}
-              {activeSection === "notifications" && (
+              {data && activeSection === "notifications" && (
                 <div className="space-y-4">
+                  <p className="text-caption text-ink-3">Not available yet: VSI doesn&apos;t store or send these alerts today, so they can&apos;t be switched on.</p>
                   {[
                     { key: "notif_email", label: "Email Alerts", desc: "Receive alerts when keyword rankings change significantly" },
                     { key: "notif_weekly", label: "Weekly Digest", desc: "Get a weekly summary of all client performance metrics" },
@@ -216,14 +318,12 @@ export default function AgencySettingsPage() {
                         <p className="text-caption text-ink-3 mt-0.5">{desc}</p>
                       </div>
                       <button
-                        onClick={() => update(key, !(form as Record<string, unknown>)[key])}
-                        className={`relative w-12 h-6 rounded-full transition-colors shrink-0 ml-4 cursor-pointer ${
-                          (form as Record<string, unknown>)[key] ? "bg-ink" : "bg-surface-2 border border-line"
-                        }`}
+                        disabled
+                        aria-disabled
+                        aria-label={`${label}: not available yet`}
+                        className="relative w-12 h-6 rounded-full transition-colors shrink-0 ml-4 cursor-not-allowed opacity-60 bg-surface-2 border border-line"
                       >
-                        <span className={`absolute top-1 w-4 h-4 bg-card rounded-full shadow transition-all ${
-                          (form as Record<string, unknown>)[key] ? "left-7" : "left-1"
-                        }`} />
+                        <span className="absolute top-1 w-4 h-4 bg-card rounded-full shadow transition-all left-1" />
                       </button>
                     </div>
                   ))}
@@ -231,7 +331,7 @@ export default function AgencySettingsPage() {
               )}
 
               {/* ── EMAIL ── */}
-              {activeSection === "email" && (
+              {data && activeSection === "email" && (
                 <div className="space-y-5">
                   <div>
                     <label className="block text-caption font-semibold text-ink mb-2">Support Email</label>
@@ -240,8 +340,9 @@ export default function AgencySettingsPage() {
                       <input
                         value={form.support_email}
                         onChange={e => update("support_email", e.target.value)}
+                        disabled={!canSave}
                         className="w-full bg-canvas border border-line focus:border-line-strong rounded-panel pl-11 pr-4 py-3 text-body text-ink placeholder:text-ink-3/70 focus:outline-none transition-colors"
-                        placeholder="support@yourcompany.com"
+                        placeholder="Not set"
                       />
                     </div>
                     <p className="text-caption text-ink-3 mt-1.5">Shown to clients in exported reports</p>
@@ -253,9 +354,10 @@ export default function AgencySettingsPage() {
                       <textarea
                         value={form.report_footer}
                         onChange={e => update("report_footer", e.target.value)}
+                        disabled={!canSave}
                         rows={3}
                         className="w-full bg-canvas border border-line focus:border-line-strong rounded-panel pl-11 pr-4 py-3 text-body text-ink placeholder:text-ink-3/70 focus:outline-none transition-colors resize-none"
-                        placeholder="© 2025 Your Agency. All rights reserved."
+                        placeholder="Not set"
                       />
                     </div>
                   </div>
@@ -265,18 +367,26 @@ export default function AgencySettingsPage() {
 
 
               {/* ── BILLING ── */}
-              {activeSection === "billing" && (
+              {data && activeSection === "billing" && (
                 <div className="space-y-5">
                   <div className="bg-brand-soft border border-line rounded-panel p-6">
                     <p className="text-caption text-brand-strong font-semibold mb-1">Current Plan</p>
-                    <p className="text-2xl font-semibold text-ink">Pilot</p>
-                    <p className="text-body text-ink-3 mt-1">Full access to all features during the pilot program</p>
+                    <p className="text-2xl font-semibold text-ink">{planLabel(org?.isPilot)}</p>
+                    <p className="text-body text-ink-3 mt-1">Billing isn&apos;t managed in VSI yet.</p>
                   </div>
                   <div className="grid grid-cols-3 gap-4">
                     {[
-                      { label: "Keywords Used", value: "37 / 1,000" },
-                      { label: "Clients", value: "9" },
-                      { label: "Reports Run", value: "142" },
+                      {
+                        label: "Active tracked keywords",
+                        value:
+                          typeof keywordsUsed === "number"
+                            ? typeof keywordCap === "number"
+                              ? `${keywordsUsed.toLocaleString()} / ${keywordCap.toLocaleString()}`
+                              : keywordsUsed.toLocaleString()
+                            : NOT_AVAILABLE,
+                      },
+                      { label: "Clients", value: fmt(data.usage?.clients) },
+                      { label: "Reports generated", value: fmt(data.usage?.reports) },
                     ].map(({ label, value }) => (
                       <div key={label} className="bg-surface-2 border border-line rounded-panel p-4 text-center">
                         <p className="text-xl font-semibold text-ink">{value}</p>
@@ -287,20 +397,22 @@ export default function AgencySettingsPage() {
                 </div>
               )}
 
-              {/* Save Button */}
-              {!["billing", "account"].includes(activeSection) && (
-                <div className="pt-4 border-t border-line">
+              {/* Save Button: only where there is something that can really be saved */}
+              {data && ["branding", "email"].includes(activeSection) && (
+                <div className="pt-4 border-t border-line space-y-2">
                   <button
                     onClick={handleSave}
-                    className={`flex items-center gap-2 px-6 py-3 rounded-panel text-body font-semibold transition-all cursor-pointer ${
+                    disabled={!canSave || saving}
+                    className={`flex items-center gap-2 px-6 py-3 rounded-panel text-body font-semibold transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 ${
                       saved
                         ? "bg-positive/10 border border-positive/30 text-positive"
                         : "bg-ink hover:bg-ink-2 text-white "
                     }`}
                   >
-                    {saved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
-                    {saved ? "Changes saved!" : "Save changes"}
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : saved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+                    {saving ? "Saving…" : saved ? "Changes saved" : "Save changes"}
                   </button>
+                  {saveError && <p role="alert" className="text-caption text-critical">{saveError}</p>}
                 </div>
               )}
             </div>

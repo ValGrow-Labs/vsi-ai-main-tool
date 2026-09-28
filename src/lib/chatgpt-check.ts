@@ -1,4 +1,5 @@
-import { buildBrandTokens, matchesBrand } from "@/lib/brand-match";
+import { buildBrandTokens, countNameMentions, matchesBrand, mentionsName } from "@/lib/brand-match";
+import { failureReason, type AiCheckStatus, type ProviderFailureReason } from "@/lib/provider-status";
 import { checkChatGPTEntityMatch } from "@/lib/chatgpt-entity-check";
 
 export interface ChatGPTCheckResult {
@@ -16,6 +17,19 @@ export interface ChatGPTCheckResult {
   entity_match: boolean | null;
   entity_actual: string | null;
   skipped_reason?: string;
+  /** "answered" when OpenAI returned an answer; otherwise why there is no result. */
+  status: AiCheckStatus;
+  failure_reason?: ProviderFailureReason;
+  /** Provenance of the answer. Only OpenAI answers are ever labelled ChatGPT. */
+  provider: "openai" | null;
+  model: string | null;
+  checked_at: string;
+}
+
+/** A competitor the project tracks. */
+export interface ProjectCompetitor {
+  domain: string;
+  name?: string | null;
 }
 
 interface OpenAIMessage {
@@ -36,22 +50,19 @@ interface OpenAIResponse {
   error?: { message?: string };
 }
 
-const KNOWN_AGENCY_BRANDS = [
-  // Common GCC/Dubai SEO/marketing agency names ChatGPT name-drops a lot.
-  // Used to detect competitors mentioned alongside (or instead of) the client.
-  "NEXA", "Digital Nexa", "Prism Digital", "Aarmax", "McCollins Media",
-  "Salesbox", "Namastetu", "Tenet", "Mamba", "Global Media Insight",
-  "Ambitious PR", "Vlad", "WSI", "DigitalGravity", "Igloo Inc",
-];
-
-function findCompetitorMentions(text: string, clientBrand: string): string[] {
-  const lower = text.toLowerCase();
-  const clientLower = clientBrand.toLowerCase();
+/**
+ * Which of the project's own competitors the answer names. Matches the
+ * competitor's name or its domain / domain stem as whole words. No built-in
+ * list: without tracked competitors this returns [].
+ */
+export function findCompetitorMentions(text: string, competitors: ProjectCompetitor[]): string[] {
   const found = new Set<string>();
-  for (const brand of KNOWN_AGENCY_BRANDS) {
-    const b = brand.toLowerCase();
-    if (b === clientLower) continue;
-    if (lower.includes(b)) found.add(brand);
+  for (const c of competitors) {
+    const domain = (c.domain || "").toLowerCase().replace(/^[a-z]+:\/+/, "").replace(/^www\./, "").split(/[/?#]/)[0];
+    if (!domain) continue;
+    const stem = domain.split(".")[0];
+    const candidates = [c.name ?? "", domain, stem.length >= 4 ? stem : ""].filter(Boolean);
+    if (candidates.some((n) => mentionsName(text, n))) found.add(domain);
   }
   return Array.from(found);
 }
@@ -60,12 +71,8 @@ function countMentions(text: string, brand: string): number {
   if (!brand) return 0;
   const tokens = buildBrandTokens({ brand, domain: "" });
   if (tokens.length === 0) return 0;
-  // Use the strictest token (the brand itself) for a count
-  const target = tokens[0].toLowerCase();
-  if (!target) return 0;
-  const re = new RegExp(target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
-  const matches = text.match(re);
-  return matches ? matches.length : 0;
+  // Count the brand itself (the first, strictest token) as whole words.
+  return countNameMentions(text, tokens[0]);
 }
 
 function extractCitedUrls(annotations: Array<{ type?: string; url_citation?: { url?: string } }> | undefined): string[] {
@@ -78,7 +85,7 @@ function extractCitedUrls(annotations: Array<{ type?: string; url_citation?: { u
   return Array.from(urls);
 }
 
-function skipped(reason: string): ChatGPTCheckResult {
+function skipped(reason: string, status: AiCheckStatus, failure?: ProviderFailureReason, model: string | null = null): ChatGPTCheckResult {
   return {
     checked: false,
     response: null,
@@ -90,6 +97,11 @@ function skipped(reason: string): ChatGPTCheckResult {
     entity_match: null,
     entity_actual: null,
     skipped_reason: reason,
+    status,
+    failure_reason: failure,
+    provider: status === "not_checked" ? null : "openai",
+    model,
+    checked_at: new Date().toISOString(),
   };
 }
 
@@ -97,46 +109,31 @@ export async function runChatGPTCheck(opts: {
   keyword: string;
   clientBrand: string;
   clientDomain: string;
+  /** The project's tracked competitors; the only source of competitor mentions. */
+  competitors?: ProjectCompetitor[];
 }): Promise<ChatGPTCheckResult> {
-  const openaiKey     = process.env.OPENAI_API_KEY;
-  const openrouterKey = process.env.OPENROUTER_API_KEY;
+  const openaiKey = process.env.OPENAI_API_KEY;
 
-  // Decide which provider to use. Prefer real OpenAI (has web search +
-  // grounded citations); fall back to OpenRouter's hosted open-weight
-  // gpt-oss model so we still get the LLM visibility signal during the
-  // pilot before the OpenAI key is funded.
-  let endpoint: string;
-  let headers: Record<string, string>;
-  let model: string;
-  let usingOpenRouter = false;
-
-  if (openaiKey) {
-    endpoint = "https://api.openai.com/v1/chat/completions";
-    headers = {
-      "Authorization": `Bearer ${openaiKey}`,
-      "Content-Type": "application/json",
-    };
-    // Model is super-admin-configurable so we can balance cost vs grounding.
-    // Default = plain gpt-4o-mini (no per-search fee). Flip to
-    // gpt-4o-mini-search-preview from /admin/settings when an agency
-    // is paying for the search tier.
-    const { getSetting } = await import("@/lib/settings");
-    const searchEnabled = await getSetting<boolean>("openai_search_enabled");
-    const configuredModel = await getSetting<string>("openai_chatgpt_model");
-    model = searchEnabled ? "gpt-4o-mini-search-preview" : (configuredModel || "gpt-4o-mini");
-  } else if (openrouterKey) {
-    endpoint = "https://openrouter.ai/api/v1/chat/completions";
-    headers = {
-      "Authorization": `Bearer ${openrouterKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://searchintel.valgrowlabs.com",
-      "X-Title": "VSI Search Intelligence",
-    };
-    model = "openai/gpt-oss-120b:free";
-    usingOpenRouter = true;
-  } else {
-    return skipped("No LLM API key configured (OPENAI_API_KEY or OPENROUTER_API_KEY)");
+  // The ChatGPT check is answered by OpenAI only. Without an OpenAI key the
+  // check doesn't run (not checked) — another model's answer is never
+  // stored or labelled as ChatGPT.
+  if (!openaiKey) {
+    return skipped("ChatGPT checks need OPENAI_API_KEY", "not_checked", "PROVIDER_NOT_CONFIGURED");
   }
+
+  const endpoint = "https://api.openai.com/v1/chat/completions";
+  const headers: Record<string, string> = {
+    "Authorization": `Bearer ${openaiKey}`,
+    "Content-Type": "application/json",
+  };
+  // Model is super-admin-configurable so we can balance cost vs grounding.
+  // Default = plain gpt-4o-mini (no per-search fee). Flip to
+  // gpt-4o-mini-search-preview from /admin/settings when an agency
+  // is paying for the search tier.
+  const { getSetting } = await import("@/lib/settings");
+  const searchEnabled = await getSetting<boolean>("openai_search_enabled");
+  const configuredModel = await getSetting<string>("openai_chatgpt_model");
+  const model = searchEnabled ? "gpt-4o-mini-search-preview" : (configuredModel || "gpt-4o-mini");
 
   const today = new Date();
   const todayLabel = today.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
@@ -173,15 +170,21 @@ export async function runChatGPTCheck(opts: {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      return skipped(`HTTP ${res.status} ${text.slice(0, 200)}`);
+      const reason: ProviderFailureReason =
+        res.status === 401 || res.status === 403 ? "PROVIDER_AUTH_FAILED" : res.status === 429 ? "PROVIDER_RATE_LIMITED" : "PROVIDER_ERROR";
+      return skipped(`HTTP ${res.status} ${text.slice(0, 200)}`, "check_failed", reason, model);
     }
-    data = (await res.json()) as OpenAIResponse;
+    try {
+      data = (await res.json()) as OpenAIResponse;
+    } catch {
+      return skipped("OpenAI returned invalid JSON", "check_failed", "INVALID_RESPONSE", model);
+    }
     if (data.error) {
-      return skipped(data.error.message ?? "LLM API error");
+      return skipped(data.error.message ?? "LLM API error", "check_failed", "PROVIDER_ERROR", model);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Network error";
-    return skipped(msg.includes("abort") ? "Timed out after 40s" : msg);
+    return skipped(msg.includes("abort") ? "Timed out after 40s" : msg, "check_failed", msg.includes("abort") ? "PROVIDER_TIMEOUT" : failureReason(err), model);
   } finally {
     clearTimeout(timer);
   }
@@ -190,10 +193,11 @@ export async function runChatGPTCheck(opts: {
   const response = message?.content?.trim() ?? null;
   // Annotations (URL citations) are only emitted by OpenAI's web-search-
   // enabled models — open-weight models on OpenRouter won't include them.
-  const citedUrls = usingOpenRouter ? [] : extractCitedUrls(message?.annotations);
+  const citedUrls = extractCitedUrls(message?.annotations);
 
   if (!response) {
-    return skipped("Empty response from LLM");
+    // No answer text means nothing was checked — not "not mentioned".
+    return skipped("Empty response from OpenAI", "check_failed", "INVALID_RESPONSE", model);
   }
 
   const brandTokens = buildBrandTokens({ brand: opts.clientBrand, domain: opts.clientDomain });
@@ -217,7 +221,7 @@ export async function runChatGPTCheck(opts: {
       })
     : false;
 
-  const competitors = findCompetitorMentions(response, opts.clientBrand);
+  const competitors = findCompetitorMentions(response, opts.competitors ?? []);
 
   // Entity disambiguation. Only worth the extra LLM call when the brand
   // name actually appeared — if it didn't, there's nothing to disambiguate.
@@ -255,5 +259,9 @@ export async function runChatGPTCheck(opts: {
     cited_urls: citedUrls,
     entity_match: entityMatch,
     entity_actual: entityActual,
+    status: "answered",
+    provider: "openai",
+    model,
+    checked_at: new Date().toISOString(),
   };
 }

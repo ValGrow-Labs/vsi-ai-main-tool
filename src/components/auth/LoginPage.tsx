@@ -4,9 +4,10 @@ import React, { useState, useEffect } from 'react';
 import { FullScreenSignup, type AuthMode } from '@/components/ui/full-screen-signup';
 import { Toast } from '../common/Toast';
 import type { ToastMessage, UserProfile } from '@/types/login';
-import { setClientSession, isAuthenticatedClient, markJustSignedIn } from '@/lib/auth-client';
+import { setClientSession, isAuthenticatedClient, markJustSignedIn, clearClientSession } from '@/lib/auth-client';
 import { createClient } from '@/lib/supabase/client';
 import { signUpWithEmail, type SignupInput } from '@/lib/signup';
+import { postLoginPath } from '@/lib/safe-redirect';
 
 // Display name when the account has no full name: the part of the email before the "@".
 const nameFromEmail = (email: string) => {
@@ -23,12 +24,20 @@ export const LoginPage: React.FC<{ initialMode?: AuthMode }> = ({ initialMode = 
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const errorParam = params.get("error");
+    if (errorParam === "account_disabled") {
+      // The server refused a disabled account. Sign this browser out fully (Supabase session and the
+      // client-side markers) so it doesn't bounce back to the dashboard, and say why.
+      clearClientSession();
+      createClient().auth.signOut().catch(() => {});
+      setAuthError("This account has been disabled. Contact your administrator if you think this is a mistake.");
+      return;
+    }
     if (isAuthenticatedClient()) {
       window.location.href = "/dashboard";
       return;
     }
-    const params = new URLSearchParams(window.location.search);
-    const errorParam = params.get("error");
     if (errorParam === "google_unavailable") {
       setAuthError("Google sign-in isn't available. Sign in with your email and password.");
     } else if (errorParam === "auth_callback_error") {
@@ -40,8 +49,8 @@ export const LoginPage: React.FC<{ initialMode?: AuthMode }> = ({ initialMode = 
     setClientSession(user);
     // Go straight to the next page. The dashboard shows the welcome message once it has loaded.
     markJustSignedIn();
-    const params = new URLSearchParams(window.location.search);
-    window.location.href = target || params.get("redirect") || "/dashboard";
+    // Only ever an internal app path: ?redirect= comes from the URL and could point anywhere.
+    window.location.href = postLoginPath(target, window.location.search);
   };
 
   const isPlaceholder = () => {

@@ -1,7 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { runSiteAudit } from "@/lib/site-audit/run";
-import { getSearchProvider, getAIProvider, calculateVisibilityMetrics, generateDataDrivenRecommendations, type SearchQueryResult, type AIResponseResult, type TechnicalSeoIssue } from "@/lib/providers";
-import type { Location } from "@/types/search";
+import { isAuditProblem } from "@/lib/site-audit/checks";
+import { auditRowUpdate } from "@/lib/site-audit/store";
+import { runKeywordsForClient, type TrackedKeyword } from "@/lib/run-pipeline";
+import { isProviderUnavailable, serpApiKey, serperKey } from "@/lib/provider-status";
+import { logProviderError, safeProviderMessage } from "@/lib/provider-response";
+import type { Location, TrackType } from "@/types/search";
 
 export type StageName =
   | "website_analysis"
@@ -21,27 +25,79 @@ export interface AnalysisJobRecord {
   stage_statuses: Record<StageName, StageStatus>;
   error_message: string | null;
   stages_data: Record<string, unknown>;
+  /** Who started the job (analysis_jobs.requested_by). */
+  requested_by?: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
 }
 
-/** In-memory job state cache for fallback when DB table migration is pending */
+/** Who is asking for a job. A job is only ever handed to its own organization (or a platform admin). */
+export interface JobScope {
+  agencyId: string;
+  isSuperAdmin: boolean;
+}
+
+function inScope(job: AnalysisJobRecord, scope: JobScope): boolean {
+  return scope.isSuperAdmin || job.agency_id === scope.agencyId;
+}
+
+/**
+ * A job still "in progress" after this long is treated as dead (the process that ran it is gone:
+ * maxDuration is 300s), so it no longer blocks a new run.
+ */
+export const JOB_STALE_AFTER_MS = 10 * 60 * 1000;
+
+export function isJobRunning(job: Pick<AnalysisJobRecord, "status" | "updated_at" | "created_at">, now = Date.now()): boolean {
+  if (job.status !== "in_progress") return false;
+  const last = Date.parse(job.updated_at || job.created_at);
+  return Number.isFinite(last) && now - last < JOB_STALE_AFTER_MS;
+}
+
+/**
+ * Text stored in analysis_jobs / site_audits for a thrown error. Those columns are returned to the
+ * project's organization (GET /api/jobs/analysis, the overview), so they only ever hold fixed
+ * wording: a provider failure gets its standard message, anything else the caller's fallback. The raw
+ * error (which can carry provider URLs with api_key, SQL or stack detail) is logged server-side only.
+ */
+export function publicJobError(err: unknown, fallback: string): string {
+  return isProviderUnavailable(err) ? safeProviderMessage(err) : fallback;
+}
+
+/** The analysis_jobs table is missing (migration 040 not applied). */
+export function isMissingJobsTable(err: { code?: string; message?: string } | null | undefined): boolean {
+  if (!err) return false;
+  if (err.code === "42P01" || err.code === "PGRST205") return true;
+  const msg = err.message ?? "";
+  return msg.includes("analysis_jobs") && /does not exist|schema cache|could not find/i.test(msg);
+}
+
+/**
+ * The in-memory job store is a local-development stand-in for the analysis_jobs table. It is
+ * process-global (not shared between server instances, lost on restart), so it is never used in
+ * production: there a missing table is reported as 503 "setup required" instead.
+ */
+export function memoryJobStoreAllowed(): boolean {
+  return process.env.NODE_ENV !== "production";
+}
+
+/** In-memory job state for local development when the analysis_jobs migration is pending. */
 const fallbackJobStore = new Map<string, AnalysisJobRecord>();
 const clientToJobStore = new Map<string, string>();
 
-export function getFallbackJob(jobId: string): AnalysisJobRecord | null {
-  return fallbackJobStore.get(jobId) ?? null;
+/** A fallback job, only if it belongs to the caller's organization (platform admins: any). */
+export function getFallbackJob(jobId: string, scope: JobScope): AnalysisJobRecord | null {
+  const job = fallbackJobStore.get(jobId) ?? null;
+  return job && inScope(job, scope) ? job : null;
 }
 
-export function getFallbackJobForClient(clientId: string): AnalysisJobRecord | null {
+/** The latest fallback job for a project, only if it belongs to the caller's organization. */
+export function getFallbackJobForClient(clientId: string, scope: JobScope): AnalysisJobRecord | null {
   const jobId = clientToJobStore.get(clientId);
-  if (jobId) {
-    const job = fallbackJobStore.get(jobId);
-    if (job) return job;
-  }
-  for (const job of Array.from(fallbackJobStore.values()).reverse()) {
-    if (job.client_id === clientId) return job;
+  const job = jobId ? fallbackJobStore.get(jobId) ?? null : null;
+  if (job && job.client_id === clientId) return inScope(job, scope) ? job : null;
+  for (const j of Array.from(fallbackJobStore.values()).reverse()) {
+    if (j.client_id === clientId) return inScope(j, scope) ? j : null;
   }
   return null;
 }
@@ -49,6 +105,30 @@ export function getFallbackJobForClient(clientId: string): AnalysisJobRecord | n
 export function setFallbackJob(job: AnalysisJobRecord): void {
   fallbackJobStore.set(job.id, job);
   clientToJobStore.set(job.client_id, job.id);
+}
+
+/** Tests only. */
+export function resetFallbackJobStore(): void {
+  fallbackJobStore.clear();
+  clientToJobStore.clear();
+}
+
+/**
+ * Projects whose job is being created right now in this process. Closes the gap between "no job
+ * is running" and the new row existing, for two requests in the same process. Across server
+ * instances only a database constraint can do that (see the partial unique index requested for
+ * analysis_jobs).
+ */
+const startingClients = new Set<string>();
+
+export function claimJobStart(clientId: string): boolean {
+  if (startingClients.has(clientId)) return false;
+  startingClients.add(clientId);
+  return true;
+}
+
+export function releaseJobStart(clientId: string): void {
+  startingClients.delete(clientId);
 }
 
 export async function updateJobStage(
@@ -67,7 +147,7 @@ export async function updateJobStage(
     if (nextStage) fallback.stage = nextStage;
     if (errorMessage) fallback.error_message = errorMessage;
     if (nextStage === "completed") {
-      fallback.status = stageStatus === "failed" ? "failed" : "completed";
+      fallback.status = Object.values(fallback.stage_statuses).includes("failed") || stageStatus === "failed" ? "failed" : "completed";
       fallback.completed_at = new Date().toISOString();
     }
     fallback.updated_at = new Date().toISOString();
@@ -96,7 +176,7 @@ export async function updateJobStage(
       if (nextStage) updates.stage = nextStage;
       if (stageStatus === "failed" && errorMessage) updates.error_message = errorMessage;
       if (nextStage === "completed") {
-        updates.status = stageStatus === "failed" ? "failed" : "completed";
+        updates.status = Object.values(currentStatuses).includes("failed") ? "failed" : "completed";
         updates.completed_at = new Date().toISOString();
       }
       await supabase.from("analysis_jobs").update(updates).eq("id", jobId);
@@ -159,14 +239,11 @@ export async function runFullAnalysisPipeline(
 
     const domain = client.website.replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
     const brandName = client.brand_name || client.name || domain;
-    const locationCode = (client.default_location || "us") as Location;
+    // No invented market: without a project location the checks can't run.
+    const locationCode = (client.default_location || null) as Location | null;
 
-    const technicalIssues: TechnicalSeoIssue[] = [];
-    const searchResults: SearchQueryResult[] = [];
-    const aiResults: AIResponseResult[] = [];
-
-    // Fetch tracked keywords for SEO setup & audit
-    let keywords: Array<{ id: string; keyword: string; domain?: string; brand?: string; location?: string; track_type?: string }> = [];
+    // Fetch tracked keywords for SEO setup & checks
+    let keywords: Array<{ id: string; keyword: string; domain?: string | null; brand?: string | null; location?: string | null; track_type?: string | null }> = [];
     if (supabase) {
       try {
         const { data: kwRows } = await supabase
@@ -181,272 +258,126 @@ export async function runFullAnalysisPipeline(
     }
 
     // ─────────────────────────────────────────
-    // STAGE 1: WEBSITE ANALYSIS
+    // STAGE 1: WEBSITE ANALYSIS (site audit)
     // ─────────────────────────────────────────
     await updateJobStage(jobId, "website_analysis", "in_progress", "website_analysis");
-    try {
-      const seoSetup = {
-        trackedKeywords: keywords.map((k) => k.keyword),
-        targetCountry: client.country || client.default_location,
-        targetLanguage: (client as { language?: string | null }).language || null,
-      };
-
-      const auditOutcome = await runSiteAudit(client.website, seoSetup);
-
-      // Collect technical SEO issues with evidence
-      for (const check of auditOutcome.checks) {
-        if (check.status !== "pass") {
-          technicalIssues.push({
-            checkId: check.id,
-            title: `Check: ${check.id.replace(/_/g, " ").toUpperCase()}`,
-            severity: check.status === "fail" ? "critical" : "warning",
-            description: `${check.count} issue(s) detected during technical audit.`,
-            affectedCount: check.count,
-            affectedUrls: check.affected || [],
-            recommendation: `Review and address ${check.id.replace(/_/g, " ")} on affected pages.`,
-          });
-        }
-      }
-
-      if (supabase) {
-        try {
-          await supabase.from("site_audits").insert({
-            agency_id: agencyId,
-            client_id: clientId,
-            domain: auditOutcome.domain || domain,
-            status: "completed",
-            score: auditOutcome.score,
-            pages_scanned: auditOutcome.pages.length,
-            checks: auditOutcome.checks,
-            pages: auditOutcome.pages.map(({ internalLinks, ...rest }) => ({ ...rest, linkCount: internalLinks.length })),
-            completed_at: new Date().toISOString(),
-          });
-        } catch {
-          // ignore DB error
-        }
-      }
-
-      await updateJobStage(
-        jobId,
-        "website_analysis",
-        "completed",
-        "seo_analysis",
-        { score: auditOutcome.score, pagesScanned: auditOutcome.pages.length, issuesFound: technicalIssues.length }
-      );
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : "Website analysis failed.";
-      console.error("[analysis-runner] website analysis error:", err);
-
-      if (supabase) {
-        try {
-          await supabase.from("site_audits").insert({
-            agency_id: agencyId,
-            client_id: clientId,
-            domain: domain,
-            status: "failed",
-            error_message: errMsg,
-            completed_at: new Date().toISOString(),
-          });
-        } catch {
-          // ignore DB error
-        }
-      }
-
-      await updateJobStage(
-        jobId,
-        "website_analysis",
-        "failed",
-        "seo_analysis",
-        { error: errMsg },
-        errMsg
-      );
-    }
+    await runAuditStage(jobId, supabase, { agencyId, clientId, website: client.website, domain, keywords: keywords.map((k) => k.keyword), client });
 
     // ─────────────────────────────────────────
-    // STAGE 2: SEO / SEARCH VISIBILITY ANALYSIS
+    // STAGES 2 + 4: GOOGLE RANKS AND AI ANSWERS
+    // The same pipeline as "Run checks": one row per search, real provider
+    // data only, failed checks recorded as failed (never as "not ranking" or
+    // "not mentioned"), and each AI engine stored only from its own provider.
     // ─────────────────────────────────────────
     await updateJobStage(jobId, "seo_analysis", "in_progress", "seo_analysis");
 
-    const searchProvider = getSearchProvider();
-    const isSearchConfigured = searchProvider.isConfigured();
+    const searchConfigured = !!(serpApiKey() || serperKey());
+    let run: Awaited<ReturnType<typeof runKeywordsForClient>> | null = null;
+    let runError: string | null = null;
 
-    if (keywords.length > 0 && isSearchConfigured) {
-      for (const kw of keywords) {
-        try {
-          const res = await searchProvider.search(kw.keyword, kw.location || locationCode, domain, kw.brand || brandName);
-          searchResults.push(res);
-
-          // Save snapshot to search_results table
-          if (supabase) {
-            try {
-              await supabase.from("search_results").insert({
-                agency_id: agencyId,
-                client_id: clientId,
-                tracked_keyword_id: kw.id,
-                keyword: kw.keyword,
-                domain: domain,
-                brand: kw.brand || brandName,
-                location: kw.location || locationCode,
-                track_type: kw.track_type || "both",
-                rank_position: res.rankingPosition,
-                rank_url: res.rankingUrl,
-                rank_title: res.rankingTitle,
-                serp_features: res.serpFeatures,
-                serp_results_json: res.organicResults,
-              });
-            } catch {
-              // ignore DB insert error
-            }
-          }
-        } catch {
-          // Continue with next keyword
+    if (keywords.length > 0 && searchConfigured && supabase) {
+      try {
+        const { data: toggles } = await supabase
+          .from("clients")
+          .select("rank_tracking_enabled, ai_mode_enabled, ai_overview_enabled, chatgpt_enabled")
+          .eq("id", clientId)
+          .maybeSingle();
+        const tracked: TrackedKeyword[] = [];
+        for (const k of keywords) {
+          const location = (k.location || locationCode) as Location | null;
+          if (!location) continue; // no market chosen for this search: not checked
+          tracked.push({
+            id: k.id,
+            keyword: k.keyword,
+            domain: k.domain || domain,
+            brand: k.brand || brandName,
+            location,
+            track_type: (k.track_type || "both") as TrackType,
+            client_id: clientId,
+          });
         }
+        run = await runKeywordsForClient({
+          agencyId,
+          clientId,
+          client: {
+            rank_tracking_enabled: toggles?.rank_tracking_enabled ?? null,
+            ai_mode_enabled: toggles?.ai_mode_enabled ?? null,
+            ai_overview_enabled: toggles?.ai_overview_enabled ?? null,
+            chatgpt_enabled: toggles?.chatgpt_enabled ?? null,
+          },
+          keywords: tracked,
+        });
+      } catch (err) {
+        logProviderError("analysis keyword checks", err);
+        runError = publicJobError(err, "The checks couldn't be run.");
       }
-
-      await updateJobStage(
-        jobId,
-        "seo_analysis",
-        "completed",
-        "competitor_analysis",
-        {
-          totalKeywords: keywords.length,
-          providerUsed: searchProvider.name,
-          isSearchConfigured: true,
-        }
-      );
-    } else {
-      await updateJobStage(
-        jobId,
-        "seo_analysis",
-        isSearchConfigured ? "completed" : "unconfigured",
-        "competitor_analysis",
-        {
-          totalKeywords: keywords.length,
-          providerUsed: searchProvider.name,
-          isSearchConfigured,
-        }
-      );
     }
 
+    const runSummary = run
+      ? {
+          totalKeywords: keywords.length,
+          checked: run.total,
+          saved: run.completed,
+          failed: run.failed,
+          notCheckedNoLocation: keywords.length - run.total,
+          failures: run.results.filter((r) => r.error).map((r) => ({ keyword: r.keyword, error: r.error })),
+        }
+      : { totalKeywords: keywords.length, isSearchConfigured: searchConfigured, error: runError };
+
+    // A stage is "failed" when checks were attempted and none produced a stored result.
+    const runStatus: StageStatus = !searchConfigured
+      ? "unconfigured"
+      : runError || (run && run.total > 0 && run.completed === 0)
+        ? "failed"
+        : "completed";
+
+    await updateJobStage(
+      jobId,
+      "seo_analysis",
+      runStatus,
+      "competitor_analysis",
+      runSummary,
+      runStatus === "failed" ? runError ?? "None of the Google checks could be completed." : undefined,
+    );
 
     // ─────────────────────────────────────────
-    // STAGE 3: COMPETITOR ANALYSIS
+    // STAGE 3: COMPETITORS (the project's own list; nothing is generated)
     // ─────────────────────────────────────────
     await updateJobStage(jobId, "competitor_analysis", "in_progress", "competitor_analysis");
 
-    let competitors: Array<{ domain: string; name?: string }> = [];
+    let competitorDomains: string[] = [];
     if (supabase) {
       try {
         const { data: compRows } = await supabase
           .from("project_competitors")
-          .select("domain, name")
+          .select("domain")
           .eq("client_id", clientId);
-        if (compRows) competitors = compRows;
+        competitorDomains = (compRows ?? []).map((c: { domain: string }) => c.domain);
       } catch {
         // non-fatal
       }
     }
 
-    const competitorDomains = competitors.map((c) => c.domain);
-
-    await updateJobStage(
-      jobId,
-      "competitor_analysis",
-      "completed",
-      "geo_analysis",
-      {
-        totalCompetitors: competitorDomains.length,
-        competitorDomains,
-      }
-    );
-
-    // ─────────────────────────────────────────
-    // STAGE 4: GEO / AI VISIBILITY ANALYSIS
-    // ─────────────────────────────────────────
-    await updateJobStage(jobId, "geo_analysis", "in_progress", "geo_analysis");
-
-    const aiProvider = getAIProvider();
-    const isAiConfigured = aiProvider.isConfigured();
-
-    if (keywords.length > 0 && isAiConfigured) {
-      for (const kw of keywords.slice(0, 5)) {
-
-        try {
-          const aiRes = await aiProvider.generateResponse(kw.keyword, brandName, domain, competitorDomains);
-          aiResults.push(aiRes);
-
-          if (supabase) {
-            try {
-              await supabase.from("search_results").insert({
-                agency_id: agencyId,
-                client_id: clientId,
-                tracked_keyword_id: kw.id,
-                keyword: kw.keyword,
-                domain: domain,
-                brand: kw.brand || brandName,
-                location: kw.location || locationCode,
-                track_type: "geo",
-                aio_present: aiRes.brandMentioned || aiRes.citations.length > 0,
-                aio_snippet: aiRes.rawResponse.slice(0, 300),
-                aio_full_text: aiRes.rawResponse,
-                cited_domains: aiRes.citations,
-                client_cited: aiRes.isTargetCited,
-                mentioned_in_text: aiRes.brandMentioned,
-                chatgpt_checked: true,
-                chatgpt_response: aiRes.rawResponse,
-                chatgpt_brand_cited: aiRes.isTargetCited,
-                chatgpt_brand_mentioned: aiRes.brandMentioned,
-                chatgpt_mention_count: aiRes.mentionCount,
-                chatgpt_competitors: aiRes.competitorsMentioned,
-                chatgpt_cited_urls: aiRes.citations,
-                citations_json: aiRes.citations,
-              });
-            } catch {
-              // ignore DB insert error
-            }
-          }
-        } catch {
-          // Continue
-        }
-      }
-    }
-
-    await updateJobStage(
-      jobId,
-      "geo_analysis",
-      isAiConfigured ? "completed" : "unconfigured",
-      "results_prep",
-      {
-        promptsChecked: aiResults.length,
-        providerUsed: aiProvider.name,
-        isAiConfigured,
-      }
-    );
-
-    // ─────────────────────────────────────────
-    // STAGE 5: RESULTS PREPARATION & METRICS
-    // ─────────────────────────────────────────
-    await updateJobStage(jobId, "results_prep", "in_progress", "results_prep");
-
-    const metrics = calculateVisibilityMetrics(searchResults, aiResults, competitorDomains);
-    const recommendations = generateDataDrivenRecommendations({
-      technicalIssues,
-      searchResults,
-      aiResults,
+    await updateJobStage(jobId, "competitor_analysis", "completed", "geo_analysis", {
+      totalCompetitors: competitorDomains.length,
       competitorDomains,
     });
 
-    await updateJobStage(
-      jobId,
-      "results_prep",
-      "completed",
-      "completed",
-      {
-        metrics,
-        recommendations,
-        summary: "Full search & GEO visibility analysis completed successfully.",
-      }
-    );
+    // STAGE 4 ran together with stage 2 (one pipeline, one row per search).
+    await updateJobStage(jobId, "geo_analysis", runStatus, "results_prep", runSummary);
+
+    // ─────────────────────────────────────────
+    // STAGE 5: RESULTS
+    // ─────────────────────────────────────────
+    await updateJobStage(jobId, "results_prep", "in_progress", "results_prep");
+    await updateJobStage(jobId, "results_prep", "completed", "completed", {
+      summary:
+        runStatus === "completed"
+          ? "Checks finished. Results are on the Search and AI Visibility pages."
+          : runStatus === "unconfigured"
+            ? "Google and AI checks weren't run: no search provider is configured."
+            : "Some checks couldn't be completed.",
+    });
   } catch (err) {
     console.error("[analysis-runner] critical error:", err);
     await updateJobStage(
@@ -455,8 +386,70 @@ export async function runFullAnalysisPipeline(
       "failed",
       "completed",
       undefined,
-      err instanceof Error ? err.message : "An unexpected error occurred during analysis."
+      publicJobError(err, "An unexpected error occurred during analysis.")
     );
+  }
+}
+
+/**
+ * Stage 1: site audit. Stores the audit only as what it really is — a failed
+ * audit is stored as failed with its reason, never as a completed score.
+ */
+async function runAuditStage(
+  jobId: string,
+  supabase: Awaited<ReturnType<typeof createClient>> | null,
+  ctx: { agencyId: string; clientId: string; website: string; domain: string; keywords: string[]; client: AnalysisClientInput },
+) {
+  try {
+    const seoSetup = {
+      trackedKeywords: ctx.keywords,
+      targetCountry: ctx.client.country || ctx.client.default_location,
+      targetLanguage: ctx.client.language || null,
+    };
+
+    const auditOutcome = await runSiteAudit(ctx.website, seoSetup);
+    // An unreachable site comes back as status "failed" (no score, no checks):
+    // it's stored as a failed audit, never as a completed one.
+    const auditFailed = auditOutcome.status === "failed";
+    const failureMessage = auditOutcome.failure?.message ?? "We couldn't load any pages from the website.";
+
+    if (supabase) {
+      const { error } = await supabase
+        .from("site_audits")
+        .insert({ agency_id: ctx.agencyId, client_id: ctx.clientId, ...auditRowUpdate(auditOutcome) });
+      if (error) console.error("[analysis-runner] site audit save failed:", error.message);
+    }
+
+    await updateJobStage(
+      jobId,
+      "website_analysis",
+      auditFailed ? "failed" : "completed",
+      "seo_analysis",
+      auditFailed
+        ? { error: failureMessage, auditStatus: auditOutcome.status }
+        : {
+            auditStatus: auditOutcome.status,
+            score: auditOutcome.score,
+            pagesScanned: auditOutcome.coverage.pagesLoaded,
+            issuesFound: auditOutcome.checks.filter(isAuditProblem).length,
+          },
+      auditFailed ? failureMessage : undefined,
+    );
+  } catch (err) {
+    const errMsg = publicJobError(err, "Website analysis failed.");
+    console.error("[analysis-runner] website analysis error:", err);
+    if (supabase) {
+      const { error } = await supabase.from("site_audits").insert({
+        agency_id: ctx.agencyId,
+        client_id: ctx.clientId,
+        domain: ctx.domain,
+        status: "failed",
+        error_message: errMsg,
+        completed_at: new Date().toISOString(),
+      });
+      if (error) console.error("[analysis-runner] site audit save failed:", error.message);
+    }
+    await updateJobStage(jobId, "website_analysis", "failed", "seo_analysis", { error: errMsg }, errMsg);
   }
 }
 

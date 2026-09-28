@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireAgency } from "@/lib/auth";
+import { requireAgencyApi } from "@/lib/auth";
 import { UUID_PATTERN } from "@/lib/project-types";
 import { isMissingTableError } from "@/lib/site-audit/store";
 
@@ -12,7 +12,8 @@ function error(status: number, code: string, message: string) {
 
 /** Remove a competitor from a project. Scoped to the caller's organization. */
 export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: string; competitorId: string }> }) {
-  const session = await requireAgency();
+  const session = await requireAgencyApi();
+  if (session instanceof Response) return session;
   const { id, competitorId } = await ctx.params;
   if (!UUID_PATTERN.test(id) || !UUID_PATTERN.test(competitorId)) return error(400, "bad_request", "Invalid request.");
 

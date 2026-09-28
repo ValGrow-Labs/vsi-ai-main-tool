@@ -1,3 +1,4 @@
+import { AI_OVERVIEW, GOOGLE_AI_OVERVIEW } from "@/lib/ai-engines";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
@@ -43,9 +44,9 @@ export default async function KeywordDetailPage({
  rank_tracking_enabled: boolean | null;
  chatgpt_enabled: boolean | null;
  };
- // Platform defaults - keep aligned with run-pipeline.
- const showAiMode = client.ai_mode_enabled ?? true;
- const showAiOverview = client.ai_overview_enabled ?? false;
+ // Platform defaults - keep aligned with run-pipeline. The Google AI Overview
+ // check is switched by the ai_mode_enabled column (legacy name).
+ const showGoogleAiOverview = client.ai_mode_enabled ?? true;
  const showRank = client.rank_tracking_enabled ?? true;
  // ChatGPT visibility is now on by default for every client - pilots get
  // the full set of signals. Each client can still opt out via /admin/clients.
@@ -213,10 +214,10 @@ export default async function KeywordDetailPage({
  </div>
  )}
 
- {/* AI Mode */}
- {showAiMode && (
+ {/* Google AI Overview (aio_* columns) */}
+ {showGoogleAiOverview && (
  <div className="rounded-control bg-surface-2 p-4">
- <p className="mb-1.5 text-caption font-medium text-ink-3">AI Mode</p>
+ <p className="mb-1.5 text-caption font-medium text-ink-3">{GOOGLE_AI_OVERVIEW}</p>
  <p className={`text-[1.0625rem] font-semibold leading-6 ${
  liveClientCited ? "text-positive" :
  latest.mentioned_in_text ? "text-info" :
@@ -240,23 +241,8 @@ export default async function KeywordDetailPage({
  </div>
  )}
 
- {/* AI Overview - only when the client opted in */}
- {showAiOverview && (
- <div className="rounded-control bg-surface-2 p-4">
- <p className="mb-1.5 text-caption font-medium text-ink-3">AI Overview</p>
- <p className={`text-[1.0625rem] font-semibold leading-6 ${
- latest.ai_overview_client_cited ? "text-positive" :
- latest.ai_overview_present ? "text-ink-2" :
- latest.ai_overview_present === false ? "text-ink-3" :
- "text-ink-3"
- }`}>
- {latest.ai_overview_client_cited ? "Cited" :
- latest.ai_overview_present ? "Present" :
- latest.ai_overview_present === false ? "Not triggered" :
- "-"}
- </p>
- </div>
- )}
+ {/* The legacy ai_overview_* columns only held a copy of the same Google
+ request, so there is no second Google block (see ai-engines.ts). */}
 
  {/* ChatGPT - only when the client opted in */}
  {showChatGpt && (
@@ -297,9 +283,9 @@ export default async function KeywordDetailPage({
  <div className="mt-4 flex items-center gap-3 rounded-control bg-surface-2 border border-line p-3">
  <StatusDot color="gray" size="md" />
  <div className="flex-1">
- <p className="text-body font-semibold text-ink">AI Mode present - content pending</p>
+ <p className="text-body font-semibold text-ink">{AI_OVERVIEW} present - content pending</p>
  <p className="text-caption text-ink-3">
- Google triggered an AI Mode for this query but content wasn&apos;t captured in this snapshot. Re-run to fetch.
+ Google showed an {AI_OVERVIEW} for this query but its content wasn&apos;t captured in this snapshot. Re-run to fetch.
  </p>
  </div>
  </div>
@@ -367,10 +353,6 @@ export default async function KeywordDetailPage({
  serpResults={(latest.serp_results_json as OrganicResult[]) ?? []}
  clientDomain={client.website}
  clientBrand={client.brand_name ?? client.name}
- aiOverviewPresent={showAiOverview ? latest.ai_overview_present : null}
- aiOverviewFullText={showAiOverview ? latest.ai_overview_full_text : null}
- aiOverviewCitations={showAiOverview ? ((latest.ai_overview_citations_json as AIOCitation[]) ?? []) : []}
- aiOverviewClientCited={showAiOverview ? latest.ai_overview_client_cited : null}
  />
  </div>
  ) : null}

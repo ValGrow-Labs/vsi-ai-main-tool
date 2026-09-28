@@ -13,6 +13,23 @@ export interface RankRow {
   created_at: string;
   rank_position: number | null;
   rank_url: string | null;
+  /** Migration 042. NULL/absent on older rows. */
+  rank_status?: "found" | "not_found" | "check_failed" | "not_checked" | null;
+  /** First stored organic result (serp_results_json->0); null when no results were stored. */
+  serp_first?: unknown;
+}
+
+/**
+ * Was this row a real Google rank observation? Failed or skipped lookups are
+ * never read as "not found". Rows from before migration 042 carry no status:
+ * a NULL rank counts as "not found" only when the row stored the results it
+ * searched through (every real lookup stores the top results) — otherwise the
+ * lookup failed or didn't run, and the row is ignored for rankings.
+ */
+export function isRankObservation(r: RankRow): boolean {
+  if (r.rank_status) return r.rank_status === "found" || r.rank_status === "not_found";
+  if (r.rank_position !== null && r.rank_position !== undefined) return true;
+  return r.serp_first !== null && r.serp_first !== undefined;
 }
 
 export interface RankedSearch {
@@ -20,8 +37,10 @@ export interface RankedSearch {
   keyword: string;
   position: number | null;
   previous: number | null;
-  /** Positive = moved up (better). Null when not comparable. */
+  /** Positive = moved up (better). Null unless both checks found a position. */
   change: number | null;
+  /** Moved into or out of the results between the last two checks (no numeric change). */
+  movement: "entered" | "dropped_out" | null;
   url: string | null;
   checkedAt: string;
   history: { date: string; position: number | null }[];
@@ -52,6 +71,8 @@ function key(r: RankRow) {
  * @param rankTracked keyword ids (or `kw:` keys) for which rank tracking runs
  */
 export function computeSearch(rows: RankRow[], rankTracked: Set<string>): SearchSummary {
+  // Only real rank observations: failed or skipped lookups never become "not found".
+  rows = rows.filter(isRankObservation);
   const bySearch = new Map<string, RankRow[]>();
   for (const r of rows) {
     const k = key(r);
@@ -72,20 +93,22 @@ export function computeSearch(rows: RankRow[], rankTracked: Set<string>): Search
     const days = [...perDay.values()];
     const latest = days[0];
     const prev = days[1] ?? null;
-    const change =
-      prev && latest.rank_position !== null && prev.rank_position !== null
-        ? prev.rank_position - latest.rank_position
-        : prev && latest.rank_position !== null && prev.rank_position === null
-          ? 100 - latest.rank_position
-          : prev && latest.rank_position === null && prev.rank_position !== null
-            ? -(100 - prev.rank_position)
-            : null;
+    // No numeric stand-in for "not found": a change is only computed between
+    // two real positions. Entering or leaving the results is its own state.
+    const change = prev && latest.rank_position !== null && prev.rank_position !== null ? prev.rank_position - latest.rank_position : null;
+    const movement: RankedSearch["movement"] =
+      prev && latest.rank_position !== null && prev.rank_position === null
+        ? "entered"
+        : prev && latest.rank_position === null && prev.rank_position !== null
+          ? "dropped_out"
+          : null;
     return {
       keywordId: latest.tracked_keyword_id,
       keyword: latest.keyword,
       position: latest.rank_position,
       previous: prev?.rank_position ?? null,
       change: change === 0 ? 0 : change,
+      movement,
       url: latest.rank_url,
       checkedAt: latest.created_at,
       history: days
@@ -126,8 +149,8 @@ export function computeSearch(rows: RankRow[], rankTracked: Set<string>): Search
     page2: ranked.filter((s) => (s.position ?? 0) > 10 && (s.position ?? 0) <= 20).length,
     notFound: searches.length - ranked.length,
     averagePosition: avg,
-    improved: searches.filter((s) => (s.change ?? 0) > 0).length,
-    declined: searches.filter((s) => (s.change ?? 0) < 0).length,
+    improved: searches.filter((s) => (s.change ?? 0) > 0 || s.movement === "entered").length,
+    declined: searches.filter((s) => (s.change ?? 0) < 0 || s.movement === "dropped_out").length,
     lastCheckedAt: searches.reduce<string | null>((m, s) => (!m || s.checkedAt > m ? s.checkedAt : m), null),
     searches,
     trend,

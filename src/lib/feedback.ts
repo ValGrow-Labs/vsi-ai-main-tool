@@ -98,8 +98,68 @@ export function classifyFeedbackError(err: unknown): ClassifiedFeedbackError {
     };
   }
 
+  // Our own API's validation messages (400) are fixed text written for users: show them.
+  if (status === 400 && rawMsg) {
+    return { type: "database", message: rawMsg };
+  }
+
+  // Anything else: fixed text. The raw database/server message stays in the console.
   return {
     type: "database",
-    message: `Database error: ${rawMsg}`,
+    message: "Your feedback wasn't sent. Please try again in a moment.",
   };
+}
+
+/** A trimmed, length-capped string, or null for anything else / empty. */
+export function trimOrNull(value: unknown, max: number): string | null {
+  if (typeof value !== "string") return null;
+  const t = value.trim().slice(0, max);
+  return t || null;
+}
+
+/**
+ * The only keys stored in feedback.context_data. Everything else a client sends (user_id, email,
+ * agency_id, role, is_admin, status, admin_notes, ...) is dropped, so nothing identity- or
+ * privilege-shaped can ride along in the JSON.
+ */
+export const FEEDBACK_CONTEXT_KEYS = [
+  "rating",
+  "device",
+  "os",
+  "screen",
+  "viewport",
+  "timezone",
+  "theme",
+  "timestamp",
+  "attachment_name",
+  "subject",
+  "submitted_from",
+] as const;
+
+export function feedbackContextData(input: Record<string, unknown>): Record<string, string | number | null> {
+  const out: Record<string, string | number | null> = {};
+  for (const key of FEEDBACK_CONTEXT_KEYS) {
+    const v = input[key];
+    if (typeof v === "number" && Number.isFinite(v)) out[key] = v;
+    else if (typeof v === "string") out[key] = v.slice(0, 200);
+    else if (v === null) out[key] = null;
+  }
+  return out;
+}
+
+/** Response from POST /api/feedback, the only way the browser stores feedback. */
+export async function submitFeedback(body: Record<string, unknown>): Promise<{ id: string }> {
+  const res = await fetch("/api/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json().catch(() => ({}))) as { ok?: boolean; id?: string; error?: string; code?: string };
+  if (!res.ok || !data.ok || !data.id) {
+    const err = new Error(data.error || "Your feedback wasn't sent. Please try again in a moment.") as Error & { status?: number; code?: string };
+    err.status = res.status;
+    err.code = data.code;
+    throw err;
+  }
+  return { id: data.id };
 }

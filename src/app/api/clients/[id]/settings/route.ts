@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireAgency } from "@/lib/auth";
+import { requireAgencyApi, apiServerError } from "@/lib/auth";
+import { UUID_PATTERN } from "@/lib/project-types";
 
 // Engine toggles (ai_mode_enabled, ai_overview_enabled, …) are NOT in
 // this list: they are super-admin-only and live behind /api/admin/
@@ -15,9 +16,11 @@ const ALLOWED_KEYS = new Set([
 const VALID_FREQUENCIES = new Set(["manual", "daily", "every_3_days", "weekly"]);
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+ const session = await requireAgencyApi();
+ if (session instanceof Response) return session;
  try {
  const { id } = await ctx.params;
- const session = await requireAgency();
+ if (!UUID_PATTERN.test(id)) return NextResponse.json({ error: "That project isn't available." }, { status: 404 });
  const body = (await req.json()) as Record<string, unknown>;
 
  // Validate keys + values
@@ -50,14 +53,16 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
  const supabase = await createClient();
  let q = supabase.from("clients").update(update).eq("id", id);
  if (session.role !== "super_admin") q = q.eq("agency_id", session.agencyId);
- const { error } = await q;
+ const { data: updated, error } = await q.select("id");
 
- if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+ if (error) return apiServerError("clients/[id]/settings", error);
+ // Nothing updated (not your project, or not allowed): not a success. 404, like every other
+ // project the caller can't see, so another organization's project ids aren't confirmed.
+ if (!updated || updated.length === 0) {
+ return NextResponse.json({ error: "These settings couldn't be saved for this project." }, { status: 404 });
+ }
  return NextResponse.json({ ok: true });
  } catch (err) {
- return NextResponse.json(
- { error: err instanceof Error ? err.message : "Failed" },
- { status: 500 }
- );
+ return apiServerError("clients/[id]/settings", err);
  }
 }

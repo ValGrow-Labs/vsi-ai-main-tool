@@ -131,7 +131,6 @@ export default function GeoView({ data }: { data: GeoViewData }) {
 
   /* Data state: every number below comes from the project's stored checks. */
   const columns = compareCompetitors(summary, { projectName: project.name, domain: project.domain, tracked: data.trackedCompetitors ?? [] });
-  const showOverviews = data.enabled.ai_overviews || summary.engines.some((e) => e.id === "ai_overviews" && e.checked > 0);
 
   return (
     <PageContainer>
@@ -178,7 +177,7 @@ export default function GeoView({ data }: { data: GeoViewData }) {
             <AnswerExamples items={data.evidence} projectId={project.id} />
           ) : (
             <div className="rounded-panel border border-dashed border-line-strong p-5 text-support text-ink-3">
-              An answer from your own searches appears here once a check finds one in Google AI Mode. The example at the top of the page shows
+              An answer from your own searches appears here once a check finds one in Google AI Overview. The example at the top of the page shows
               what VSI looks for.
             </div>
           )}
@@ -202,7 +201,7 @@ export default function GeoView({ data }: { data: GeoViewData }) {
       </Reveal>
 
       <Reveal>
-        <TrackedSearches summary={summary} projectId={project.id} showOverviews={showOverviews} />
+        <TrackedSearches summary={summary} projectId={project.id} />
       </Reveal>
 
       <Reveal>

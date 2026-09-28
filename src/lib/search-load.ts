@@ -8,7 +8,7 @@ export type SearchLoad =
   | { state: "ok"; summary: SearchSummary; rankTrackingEnabled: boolean; activeSearches: number }
   | { state: "error"; message: string };
 
-export const SEARCH_COLUMNS = "tracked_keyword_id, keyword, created_at, rank_position, rank_url";
+export const SEARCH_COLUMNS = "tracked_keyword_id, keyword, created_at, rank_position, rank_url, rank_status, serp_first:serp_results_json->0";
 
 export async function loadSearch(project: ProjectSummary): Promise<SearchLoad> {
   if (isDummySupabase()) return { state: "error", message: "VSI isn't connected to its database in this environment." };

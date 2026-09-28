@@ -39,7 +39,7 @@ const SIGNAL_MAP: Record<string, OpportunitySignal> = {
     priorityBg: "bg-white border-l-4 border-l-red-500 border-y border-r border-gray-200",
     headline: "Ranking but AI is stealing your clicks",
     explanation:
-      "You hold a top-10 Google position but AI Mode answers this query directly — users never reach your page. Every day this persists is lost traffic.",
+      "You hold a top-10 Google position but AI Overview answers this query directly — users never reach your page. Every day this persists is lost traffic.",
     quickActions: [
       {
         action: "Add a direct-answer paragraph at the very top of your ranking page",
@@ -61,9 +61,9 @@ const SIGNAL_MAP: Record<string, OpportunitySignal> = {
     priorityLabel: "High",
     priorityColor: "text-yellow-700",
     priorityBg: "bg-white border-l-4 border-l-yellow-500 border-y border-r border-gray-200",
-    headline: "AI Mode exists — you're completely invisible in it",
+    headline: "AI Overview exists — you're completely invisible in it",
     explanation:
-      "Google is answering this query with an AI Mode and citing competitors. Your brand doesn't appear anywhere in it.",
+      "Google is answering this query with an AI Overview and citing competitors. Your brand doesn't appear anywhere in it.",
     quickActions: [
       {
         action: "Create a comprehensive page that directly answers this query",
@@ -85,9 +85,9 @@ const SIGNAL_MAP: Record<string, OpportunitySignal> = {
     priorityLabel: "High",
     priorityColor: "text-orange-700",
     priorityBg: "bg-white border-l-4 border-l-orange-500 border-y border-r border-gray-200",
-    headline: "Invisible on both Google ranking and AI Mode",
+    headline: "Invisible on both Google ranking and AI Overview",
     explanation:
-      "Not ranking in top 10 and not cited in AI Mode. This is a content gap — no page is competing for this query.",
+      "Not ranking in top 10 and not cited in AI Overview. This is a content gap — no page is competing for this query.",
     quickActions: [
       {
         action: "Create foundational content targeting this keyword with depth and authority",
@@ -157,7 +157,7 @@ const SIGNAL_MAP: Record<string, OpportunitySignal> = {
     priorityLabel: "Winning",
     priorityColor: "text-green-700",
     priorityBg: "bg-white border-l-4 border-l-green-500 border-y border-r border-gray-200",
-    headline: "Cited as source AND named in AI Mode",
+    headline: "Cited as source AND named in AI Overview",
     explanation:
       "Your page is cited as a source AND your brand is named in the answer text. Google trusts your content enough to surface AND attribute it — strongest possible AI signal.",
     quickActions: [
@@ -183,7 +183,7 @@ const SIGNAL_MAP: Record<string, OpportunitySignal> = {
     priorityBg: "bg-white border-l-4 border-l-blue-500 border-y border-r border-gray-200",
     headline: "Linked as source — but brand is not named",
     explanation:
-      "Your page is one of the source links under the AI Mode answer, but Google never names the brand in the answer text itself. Users read the answer and don't know it came from you — link visibility without brand recall.",
+      "Your page is one of the source links under the AI Overview answer, but Google never names the brand in the answer text itself. Users read the answer and don't know it came from you — link visibility without brand recall.",
     quickActions: [
       {
         action: "Lead the page with brand-anchored authority signals — author bio, brand-as-entity schema, About link",
@@ -207,7 +207,7 @@ const SIGNAL_MAP: Record<string, OpportunitySignal> = {
     priorityBg: "bg-white border-l-4 border-l-green-500 border-y border-r border-gray-200",
     headline: "Ranking, cited, AND named — winning both channels",
     explanation:
-      "Top-10 in Google, linked as a source in AI Mode, and the brand is named in the answer text. Full alignment across organic and AI search.",
+      "Top-10 in Google, linked as a source in AI Overview, and the brand is named in the answer text. Full alignment across organic and AI search.",
     quickActions: [
       {
         action: "Expand to semantic variants of this keyword while protecting the core page",
@@ -253,7 +253,7 @@ const SIGNAL_MAP: Record<string, OpportunitySignal> = {
     priorityLabel: "Medium",
     priorityColor: "text-blue-700",
     priorityBg: "bg-white border-l-4 border-l-blue-500 border-y border-r border-gray-200",
-    headline: "Brand appears in AI Mode text but not sourced",
+    headline: "Brand appears in AI Overview text but not sourced",
     explanation:
       "Google references your brand in the AIO answer without linking to your page. Brand visibility without traffic.",
     quickActions: [
@@ -281,11 +281,11 @@ const SIGNAL_MAP: Record<string, OpportunitySignal> = {
     explanation: "Solid Google ranking for this keyword. No AIO tracking — consider upgrading to SEO+GEO to check AI visibility.",
     quickActions: [
       {
-        action: "Enable GEO tracking for this keyword to check AI Mode visibility",
+        action: "Enable GEO tracking for this keyword to check AI Overview visibility",
         why: "Ranking in top 10 doesn't mean clicks — if AIO is present, traffic may already be intercepted.",
       },
       {
-        action: "Monitor for ranking volatility — AI Mode can suppress click-through even at #1",
+        action: "Monitor for ranking volatility — AI Overview can suppress click-through even at #1",
         why: "Position alone doesn't guarantee traffic in the AI search era.",
       },
       {
@@ -300,8 +300,8 @@ const SIGNAL_MAP: Record<string, OpportunitySignal> = {
     priorityLabel: "Ranking",
     priorityColor: "text-green-700",
     priorityBg: "bg-white border-l-4 border-l-green-500 border-y border-r border-gray-200",
-    headline: "Ranking in top 10 — no AI Mode triggered",
-    explanation: "Strong organic position, and Google isn't using an AI Mode for this query yet. Full SERP control.",
+    headline: "Ranking in top 10 — no AI Overview triggered",
+    explanation: "Strong organic position, and Google isn't using an AI Overview for this query yet. Full SERP control.",
     quickActions: [
       {
         action: "Keep this page fresh — AIOs can appear later, and ranking pages get cited first",
@@ -323,8 +323,8 @@ const SIGNAL_MAP: Record<string, OpportunitySignal> = {
     priorityLabel: "Info",
     priorityColor: "text-gray-700",
     priorityBg: "bg-white border-l-4 border-l-gray-400 border-y border-r border-gray-200",
-    headline: "No AI Mode triggered for this query",
-    explanation: "Google isn't surfacing an AI Mode for this query yet. Tracking continues for when it does.",
+    headline: "No AI Overview triggered for this query",
+    explanation: "Google isn't surfacing an AI Overview for this query yet. Tracking continues for when it does.",
     quickActions: [
       {
         action: "Verify the query phrasing — try more conversational variants",

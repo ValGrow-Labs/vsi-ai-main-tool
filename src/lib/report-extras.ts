@@ -2,6 +2,7 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { loadSiteAudits } from "@/lib/site-audit/load";
 import { checkHeadline } from "@/lib/site-audit/copy";
+import { isAuditProblem } from "@/lib/site-audit/checks";
 import { loadGeo } from "@/lib/geo-load";
 import { loadProjectCompetitors } from "@/lib/project-competitors-load";
 import type { ProjectSummary } from "@/lib/project-types";
@@ -41,7 +42,8 @@ export async function loadReportExtras(project: ProjectSummary, since: Date): Pr
       previousScore: earlier.length ? (earlier[earlier.length - 1].score as number) : null,
       checkedAt: c.completed_at ?? c.created_at,
       pagesChecked: c.pages_scanned,
-      issues: (c.checks ?? []).filter((x) => x.status !== "pass").slice(0, 6).map((x) => checkHeadline(x)),
+      issues: (c.checks ?? []).filter(isAuditProblem).slice(0, 6).map((x) => checkHeadline(x)),
+      notChecked: (c.checks ?? []).filter((x) => x.status === "not_checked").length,
     };
   }
 

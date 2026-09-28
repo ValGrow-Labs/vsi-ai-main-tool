@@ -1,5 +1,6 @@
 "use client";
 
+import { AI_ENGINES, GOOGLE_AI_OVERVIEW } from "@/lib/ai-engines";
 import { useState } from "react";
 import { Search, MapPin, Languages, Check, Plus, Trash2, Sparkles, Target } from "lucide-react";
 import { motion } from "framer-motion";
@@ -13,10 +14,13 @@ export interface KeywordSetupItem {
 }
 
 interface AnalysisSetupProps {
+  /** False when automatic analysis couldn't be completed and the user set everything up. */
+  analyzed?: boolean;
   topics: string[];
   keywords: KeywordSetupItem[];
   location: string;
-  locationCode: Location;
+  /** Empty when no market is known yet: the user must choose one. */
+  locationCode: Location | "";
   language: string;
   targetCustomers: string[];
   competitors: string[];
@@ -28,6 +32,7 @@ interface AnalysisSetupProps {
 }
 
 export function AnalysisSetup({
+  analyzed = true,
   topics,
   keywords,
   location,
@@ -85,7 +90,9 @@ export function AnalysisSetup({
           Search &amp; SEO Analysis Setup
         </h1>
         <p className="max-w-[70ch] text-base leading-relaxed text-ink-2">
-          We&apos;ve configured your search setup automatically based on your website. Review and adjust these parameters before we start.
+          {analyzed
+            ? "We've configured your search setup automatically based on your website. Review and adjust these parameters before we start."
+            : "Add the searches you want to track and choose the search location before we start."}
         </p>
       </div>
 
@@ -109,7 +116,7 @@ export function AnalysisSetup({
             </span>
           ))}
           {topics.length === 0 && (
-            <p className="text-support italic text-ink-3">All broad business topics selected.</p>
+            <p className="text-support italic text-ink-3">No topics added.</p>
           )}
         </div>
       </div>
@@ -198,7 +205,7 @@ export function AnalysisSetup({
                 <h3 className="font-semibold text-ink">GEO / AI Search Prompts</h3>
               </div>
               <p className="text-support text-ink-2">
-                Questions VSI checks across ChatGPT, Perplexity, Gemini, and Google AI Overviews.
+                Questions VSI checks in {GOOGLE_AI_OVERVIEW} and {AI_ENGINES.chatgpt.label}.
               </p>
               <ul className="space-y-2 pt-1">
                 {geoTopics.map((promptText, i) => (
@@ -237,6 +244,11 @@ export function AnalysisSetup({
                 }}
                 className="h-10 w-full rounded-control border border-line-strong bg-surface px-3 text-body text-ink focus:border-brand focus:outline-none"
               >
+                {!locationCode && (
+                  <option value="" disabled>
+                    Select a location
+                  </option>
+                )}
                 {(Object.entries(LOCATIONS) as [Location, (typeof LOCATIONS)[Location]][]).map(([code, val]) => (
                   <option key={code} value={code}>
                     {val.label}
@@ -257,6 +269,11 @@ export function AnalysisSetup({
                 onChange={(e) => onLanguageChange(e.target.value)}
                 className="h-10 w-full rounded-control border border-line-strong bg-surface px-3 text-body text-ink focus:border-brand focus:outline-none"
               >
+                {!language && (
+                  <option value="" disabled>
+                    Select a language
+                  </option>
+                )}
                 <option value="English">English</option>
                 <option value="Spanish">Spanish</option>
                 <option value="French">French</option>
@@ -270,14 +287,14 @@ export function AnalysisSetup({
               <div>
                 <span className="block text-caption text-ink-3 font-medium">Target Audience</span>
                 <p className="text-body text-ink font-medium mt-0.5">
-                  {targetCustomers.length > 0 ? targetCustomers.join(", ") : "All consumers"}
+                  {targetCustomers.length > 0 ? targetCustomers.join(", ") : "Not specified"}
                 </p>
               </div>
 
               <div>
                 <span className="block text-caption text-ink-3 font-medium">Competitors Tracked</span>
                 <p className="text-body text-ink font-medium mt-0.5">
-                  {competitors.length > 0 ? competitors.join(", ") : "Auto-discovery active"}
+                  {competitors.length > 0 ? competitors.join(", ") : "None selected"}
                 </p>
               </div>
 

@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAgencyApi } from "@/lib/auth";
 import { searchSerpApi, SerpApiError } from "@/lib/serpapi-service";
+import { logProviderError, PROVIDER_FAILURE_MESSAGES, reasonFromHttpStatus, safeProviderMessage } from "@/lib/provider-response";
 
 export async function POST(req: NextRequest) {
+  // Paid provider call: an active signed-in user with an organization only (401 / 403 otherwise).
+  const auth = await requireAgencyApi();
+  if (auth instanceof Response) return auth;
+
   try {
     const body = await req.json();
     const { engine, prompt, variables } = body as {
@@ -28,7 +34,7 @@ export async function POST(req: NextRequest) {
         apiConnected: false,
         engine: engine || "AI Engine",
         generatedPrompt: prompt,
-        message: "Prompt generated & validated successfully. External API key (SERPAPI_KEY) is not configured in server environment.",
+        message: "Prompt generated. Live results aren't available because no search provider (SERPAPI_KEY) is configured.",
       });
     }
 
@@ -50,6 +56,17 @@ export async function POST(req: NextRequest) {
         num: 5,
       });
 
+      if (serpResult.isDemo) {
+        return NextResponse.json({
+          success: true,
+          apiConnected: false,
+          engine: engine || "AI Engine",
+          generatedPrompt: prompt,
+          message: "Prompt generated. Showing development placeholder results (VSI_ALLOW_DEMO_DATA) — not live data.",
+          isDemo: true,
+        });
+      }
+
       return NextResponse.json({
         success: true,
         apiConnected: true,
@@ -66,11 +83,11 @@ export async function POST(req: NextRequest) {
         },
       });
     } catch (apiErr: unknown) {
+      // Fixed text only: provider messages can carry response bodies or request URLs.
+      logProviderError("prompts/simulate", apiErr);
       const errorMsg = apiErr instanceof SerpApiError
-        ? apiErr.message
-        : apiErr instanceof Error
-        ? apiErr.message
-        : "External API execution failed";
+        ? PROVIDER_FAILURE_MESSAGES[reasonFromHttpStatus(apiErr.statusCode, apiErr.code)]
+        : safeProviderMessage(apiErr);
 
       return NextResponse.json({
         success: false,
@@ -80,9 +97,12 @@ export async function POST(req: NextRequest) {
       }, { status: 502 });
     }
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Request failed";
+    if (err instanceof SyntaxError) {
+      return NextResponse.json({ success: false, error: "Invalid request body." }, { status: 400 });
+    }
+    console.error("[prompts/simulate] failed", err instanceof Error ? err.message : err);
     return NextResponse.json(
-      { success: false, error: `Backend error: ${message}` },
+      { success: false, error: "Backend error: the request couldn't be completed." },
       { status: 500 }
     );
   }

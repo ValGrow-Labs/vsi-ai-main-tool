@@ -1,51 +1,46 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ExternalLink } from "lucide-react";
+import { ArrowLeft, ExternalLink, Search } from "lucide-react";
 import { PageContainer, PageHeader, Section } from "@/components/ui/Page";
 import { Notice } from "@/components/ui/Status";
 import { Skeleton } from "@/components/ui/Metrics";
-import { ButtonLink } from "@/components/ui/Button";
+import { Button, ButtonLink } from "@/components/ui/Button";
 import { displayDomain } from "@/lib/project-types";
 import { useActiveProject } from "@/components/layout/ProjectProvider";
+import {
+  createResearchController,
+  markResearchIntent,
+  sessionIntentStorage,
+  type ResearchState,
+} from "@/lib/research-request";
 import KeywordLookup from "./KeywordLookup";
-
-interface ResearchResponse {
-  success: boolean;
-  error?: string;
-  keyword: string;
-  location: string;
-  liveResultsAvailable: boolean;
-  liveResultsNote: string | null;
-  intent: { primary: string; description: string };
-  prompts: string[];
-  topOrganicResults: { position?: number; title: string; link: string; snippet?: string }[];
-}
-
-type State = { kind: "loading" } | { kind: "error"; message: string } | { kind: "ok"; data: ResearchResponse };
 
 export default function KeywordResearchView({ query, location }: { query: string; location: string }) {
   const project = useActiveProject();
-  const [state, setState] = useState<State>({ kind: "loading" });
+  // Opening this URL never spends a lookup by itself: see src/lib/research-request.ts.
+  const [state, setState] = useState<ResearchState>({ kind: "idle" });
   const ownDomain = displayDomain(project?.website);
+  const mounted = useRef(false);
+  const controller = useRef<ReturnType<typeof createResearchController> | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    fetch("/api/research", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ keyword: query, location, language: "English" }),
-    })
-      .then(async (res) => {
-        const data = (await res.json().catch(() => null)) as ResearchResponse | null;
-        if (cancelled) return;
-        if (!res.ok || !data?.success) setState({ kind: "error", message: data?.error ?? "We couldn't look up this search. Please try again." });
-        else setState({ kind: "ok", data });
-      })
-      .catch(() => !cancelled && setState({ kind: "error", message: "We couldn't reach VSI. Check your connection and try again." }));
+    mounted.current = true;
+    const c = createResearchController({
+      fetch: (input, init) => fetch(input, init),
+      storage: sessionIntentStorage(),
+      query,
+      location,
+      onState: (next) => {
+        if (mounted.current) setState(next);
+      },
+    });
+    controller.current = c;
+    // Runs the lookup only if the lookup form (or a suggested question) just asked for it.
+    void c.mount();
     return () => {
-      cancelled = true;
+      mounted.current = false;
     };
   }, [query, location]);
 
@@ -72,7 +67,22 @@ export default function KeywordResearchView({ query, location }: { query: string
         }
       />
 
-      <KeywordLookup initial={query} initialLocation={location} />
+      <KeywordLookup initial={query} initialLocation={location} onSameLookup={() => void controller.current?.run()} />
+
+      {state.kind === "idle" && (
+        <Notice
+          tone="info"
+          title="Live Google results haven't been looked up for this search yet"
+          action={
+            <Button variant="primary" onClick={() => void controller.current?.run()}>
+              <Search size={14} strokeWidth={1.75} aria-hidden />
+              Look up live results
+            </Button>
+          }
+        >
+          Each lookup uses one search from your provider allowance, so it only runs when you ask for it.
+        </Notice>
+      )}
 
       {state.kind === "loading" && (
         <div className="space-y-3" aria-busy="true" aria-label="Loading results">
@@ -82,7 +92,17 @@ export default function KeywordResearchView({ query, location }: { query: string
         </div>
       )}
 
-      {state.kind === "error" && <Notice tone="critical" title={state.message} />}
+      {state.kind === "error" && (
+        <Notice
+          tone="critical"
+          title={state.message}
+          action={
+            <Button variant="secondary" onClick={() => void controller.current?.run()}>
+              Try again
+            </Button>
+          }
+        />
+      )}
 
       {state.kind === "ok" && (
         <>
@@ -131,7 +151,11 @@ export default function KeywordResearchView({ query, location }: { query: string
               <ul className="space-y-2">
                 {state.data.prompts.map((p, i) => (
                   <li key={i} className="text-body text-ink-2">
-                    <Link href={`/dashboard?q=${encodeURIComponent(p)}&loc=${encodeURIComponent(location)}`} className="hover:text-ink hover:underline">
+                    <Link
+                      href={`/dashboard?q=${encodeURIComponent(p)}&loc=${encodeURIComponent(location)}`}
+                      onClick={() => markResearchIntent(sessionIntentStorage(), p, location)}
+                      className="hover:text-ink hover:underline"
+                    >
                       {p}
                     </Link>
                   </li>

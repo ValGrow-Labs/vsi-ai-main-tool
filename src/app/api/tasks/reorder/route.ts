@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireAgency } from "@/lib/auth";
+import { requireAgencyApi, apiServerError } from "@/lib/auth";
+import { UUID_PATTERN } from "@/lib/project-types";
 
 export const dynamic = "force-dynamic";
 
@@ -10,12 +11,13 @@ interface Payload {
 }
 
 export async function POST(req: NextRequest) {
+ const session = await requireAgencyApi();
+ if (session instanceof Response) return session;
  try {
  const { order } = (await req.json()) as Payload;
- if (!Array.isArray(order) || order.length === 0) {
+ if (!Array.isArray(order) || order.length === 0 || order.length > 500 || !order.every((id) => typeof id === "string" && UUID_PATTERN.test(id))) {
  return NextResponse.json({ error: "order array required" }, { status: 400 });
  }
- const session = await requireAgency();
  const supabase = await createClient();
 
  // Update each task's priority. Supabase's update doesn't batch by id with
@@ -30,6 +32,6 @@ export async function POST(req: NextRequest) {
 
  return NextResponse.json({ ok: true, count: order.length });
  } catch (e) {
- return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
+ return apiServerError("tasks/reorder", e);
  }
 }

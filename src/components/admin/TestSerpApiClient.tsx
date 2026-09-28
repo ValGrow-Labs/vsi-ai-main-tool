@@ -81,7 +81,7 @@ export default function TestSerpApiClient() {
           key: "ai_mode" as const,
           data: result.ai_mode,
           title: "AI Mode response",
-          subtitle: "engine=google_ai_mode - the production signal every Run Now uses",
+          subtitle: "engine=google_ai_mode - diagnostic only. Run checks use engine=google (Google AI Overview), not this.",
         },
       ]
     : [];

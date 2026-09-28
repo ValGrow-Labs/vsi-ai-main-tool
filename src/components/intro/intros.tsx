@@ -58,7 +58,7 @@ export interface IntroContent {
 
 /** Engines VSI checks today, read from the same list the product uses. */
 export const ENGINE_COVERAGE = {
-  live: ENGINES.map((e) => (e.id === "ai_overviews" ? `${e.label} (optional)` : e.label)),
+  live: ENGINES.map((e) => e.label),
   soon: COMING_SOON_ENGINES,
 };
 

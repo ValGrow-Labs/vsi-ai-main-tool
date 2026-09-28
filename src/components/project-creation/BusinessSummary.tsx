@@ -7,7 +7,7 @@ import { BusinessInfoCard } from "./BusinessInfoCard";
 import { SuggestedTopics } from "./SuggestedTopics";
 import { SitemapInput } from "./SitemapInput";
 import { TargetCustomers } from "./TargetCustomers";
-import { LOCATIONS } from "@/types/search";
+import { LOCATION_OPTIONS, resolveLocation } from "./location";
 
 export interface BusinessData {
   brandName: string;
@@ -27,16 +27,12 @@ export interface BusinessData {
 
 interface BusinessSummaryProps {
   data: BusinessData;
+  /** False when automatic analysis couldn't be completed and the user enters the details. */
+  analyzed?: boolean;
   onUpdate: (updated: BusinessData) => void;
 }
 
-const LOCATION_OPTIONS = Object.entries(LOCATIONS).map(([code, val]) => ({
-  code,
-  label: val.label,
-  country: val.label.split("(")[0].trim(),
-}));
-
-export function BusinessSummary({ data, onUpdate }: BusinessSummaryProps) {
+export function BusinessSummary({ data, analyzed = true, onUpdate }: BusinessSummaryProps) {
   const [editingAdvantage, setEditingAdvantage] = useState(false);
   const [advantageInput, setAdvantageInput] = useState(data.competitiveAdvantage);
 
@@ -66,7 +62,9 @@ export function BusinessSummary({ data, onUpdate }: BusinessSummaryProps) {
           Your business summary
         </h1>
         <p className="max-w-[70ch] text-base leading-relaxed text-ink-2">
-          Review the information we found about your business. We&apos;ll use it to personalize your SEO and GEO analysis.
+          {analyzed
+            ? "Review the information we found about your business. We'll use it to personalize your SEO and GEO analysis."
+            : "Enter the details of your business. We'll use them to personalize your SEO and GEO analysis."}
         </p>
       </div>
 
@@ -102,29 +100,13 @@ export function BusinessSummary({ data, onUpdate }: BusinessSummaryProps) {
             type="select-location"
             locationOptions={LOCATION_OPTIONS}
             onSave={(newLang, newLoc) => {
-              const trimmedLoc = (newLoc || "").trim();
-              const locMatch = LOCATION_OPTIONS.find(
-                (l) =>
-                  l.country.toLowerCase() === trimmedLoc.toLowerCase() ||
-                  l.label.toLowerCase() === trimmedLoc.toLowerCase() ||
-                  l.code.toLowerCase() === trimmedLoc.toLowerCase() ||
-                  (trimmedLoc.toLowerCase().includes("emirates") && l.code === "ae") ||
-                  (trimmedLoc.toLowerCase().includes("dubai") && l.code === "ae") ||
-                  (trimmedLoc.toLowerCase().includes("singapore") && l.code === "sg") ||
-                  (trimmedLoc.toLowerCase().includes("india") && l.code === "in") ||
-                  (trimmedLoc.toLowerCase().includes("united states") && l.code === "us") ||
-                  (trimmedLoc.toLowerCase().includes("kingdom") && l.code === "uk") ||
-                  (trimmedLoc.toLowerCase().includes("lanka") && l.code === "lk")
-              );
-
-              const resolvedLocation = locMatch ? locMatch.country : (trimmedLoc || data.location);
-              const resolvedLocationCode = locMatch ? locMatch.code : data.locationCode;
-              const resolvedLanguage = (newLang && newLang.trim()) ? newLang.trim() : (data.language || "English");
+              const resolved = resolveLocation(newLoc, data.location, data.locationCode);
+              const resolvedLanguage = newLang && newLang.trim() ? newLang.trim() : data.language;
 
               updateFields({
                 language: resolvedLanguage,
-                location: resolvedLocation,
-                locationCode: resolvedLocationCode,
+                location: resolved.location,
+                locationCode: resolved.locationCode,
               });
             }}
           />
@@ -192,6 +174,7 @@ export function BusinessSummary({ data, onUpdate }: BusinessSummaryProps) {
         {/* RIGHT COLUMN */}
         <div className="space-y-5">
           <SuggestedTopics
+            analyzed={analyzed}
             initialTopics={data.suggestedTopics}
             onChange={(newTopics) => updateField("suggestedTopics", newTopics)}
           />

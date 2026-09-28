@@ -1,83 +1,64 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { MessageSquare, Send, CheckCircle2, Star, ThumbsUp, Filter, Search, Clock, AlertCircle, Loader2 } from "lucide-react";
+import { Send, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { checkSupabaseConfig, classifyFeedbackError } from "@/lib/feedback";
+import { checkSupabaseConfig, classifyFeedbackError, submitFeedback } from "@/lib/feedback";
+
+type FormCategory = "Feature Request" | "Bug Report" | "UX Improvement";
 
 interface FeedbackItem {
  id: string;
- category: "Feature Request" | "Bug Report" | "UX Improvement";
+ category: string;
  subject: string;
  message: string;
- author: string;
  createdAt: string;
- status: "Open" | "In Review" | "Resolved";
- upvotes: number;
+ status: "Open" | "In Review" | "Resolved" | "Closed";
 }
 
-const initialFeedback: FeedbackItem[] = [
- {
- id: "fb-1",
- category: "Feature Request",
- subject: "Add Claude 3.5 Sonnet Citations",
- message: "Would love to track citation links returned in Claude 3.5 Sonnet generative answers alongside ChatGPT.",
- author: "agency@valgrow.com",
- createdAt: "2026-07-21",
- status: "In Review",
- upvotes: 24,
- },
- {
- id: "fb-2",
- category: "UX Improvement",
- subject: "Dark Mode Contrast for Trajectory Chart",
- message: "The trajectory chart looks great in dark mode! Could we increase line width for winning citations?",
- author: "client@valgrowlabs.com",
- createdAt: "2026-07-20",
- status: "Resolved",
- upvotes: 12,
- },
- {
- id: "fb-3",
- category: "Bug Report",
- subject: "PDF Report Title Overflow",
- message: "When exporting PDF for clients with long company names, title wraps onto second page.",
- author: "support@agency.org",
- createdAt: "2026-07-18",
- status: "Open",
- upvotes: 7,
- },
-];
+/** Labels for the categories stored in the feedback table. */
+const CATEGORY_LABEL: Record<string, string> = {
+ bug: "Bug Report",
+ idea: "Feature Request",
+ general: "UX Improvement",
+ question: "Question",
+ praise: "Praise",
+};
+
+function statusLabel(stat: string): FeedbackItem["status"] {
+ if (stat === "done") return "Resolved";
+ if (stat === "archived") return "Closed";
+ if (stat === "triaged" || stat === "in_progress") return "In Review";
+ return "Open";
+}
 
 export default function FeedbackPage() {
-  const [feedbackList, setFeedbackList] = useState<FeedbackItem[]>(initialFeedback);
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
-  const [category, setCategory] = useState<FeedbackItem["category"]>("Feature Request");
+  const [category, setCategory] = useState<FormCategory>("Feature Request");
   const [submitted, setSubmitted] = useState(false);
   const [myFeedback, setMyFeedback] = useState<FeedbackItem[]>([]);
+  const [listState, setListState] = useState<"loading" | "ready" | "error">("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState<any>(null);
 
-  const mapDatabaseCategory = (cat: string): "Feature Request" | "Bug Report" | "UX Improvement" => {
-    if (cat === "bug") return "Bug Report";
-    if (cat === "idea") return "Feature Request";
-    return "UX Improvement";
-  };
-
   const fetchMyFeedback = async () => {
     try {
       checkSupabaseConfig();
       const supabase = createClient();
       const { data: { user: currentUser } } = await supabase.auth.getUser();
-      if (!currentUser) return;
+      if (!currentUser) {
+        setListState("error");
+        return;
+      }
 
       const { data, error } = await supabase
         .from("feedback")
-        .select("*")
+        // Explicit columns: never fetch internal admin_notes into the browser.
+        .select("id, category, subject, message, status, created_at, context_data")
         .eq("user_id", currentUser.id)
         .order("created_at", { ascending: false });
 
@@ -85,30 +66,19 @@ export default function FeedbackPage() {
         throw error;
       }
 
-      if (data && Array.isArray(data)) {
-        const mapped: FeedbackItem[] = data.map((item: any) => {
-          const cat = mapDatabaseCategory(item.category);
-          const subj = item.subject || item.context_data?.subject || "Feedback Submission";
-          const statusMap = (stat: string): FeedbackItem["status"] => {
-            if (stat === "done" || stat === "Resolved") return "Resolved";
-            if (stat === "triaged" || stat === "in_progress" || stat === "In Review") return "In Review";
-            return "Open";
-          };
-          return {
-            id: item.id,
-            category: cat,
-            subject: subj,
-            message: item.message,
-            author: currentUser.email || "you@agency.com",
-            createdAt: item.created_at ? item.created_at.split("T")[0] : new Date().toISOString().split("T")[0],
-            status: statusMap(item.status),
-            upvotes: 1,
-          };
-        });
-        setMyFeedback(mapped);
-      }
+      const mapped: FeedbackItem[] = (Array.isArray(data) ? data : []).map((item: any) => ({
+        id: item.id,
+        category: CATEGORY_LABEL[item.category] ?? "Feedback",
+        subject: item.subject || item.context_data?.subject || "(No subject)",
+        message: item.message,
+        createdAt: item.created_at ? String(item.created_at).split("T")[0] : "",
+        status: statusLabel(item.status),
+      }));
+      setMyFeedback(mapped);
+      setListState("ready");
     } catch (e: any) {
       console.warn("Failed to fetch feedback from Supabase directly:", e);
+      setListState("error");
     }
   };
 
@@ -151,90 +121,22 @@ export default function FeedbackPage() {
     setIsSubmitting(true);
 
     try {
-      checkSupabaseConfig();
-      const supabase = createClient();
-      const { data: { user: currentUser }, error: authError } = await supabase.auth.getUser();
-      if (authError || !currentUser) {
-        throw new Error("No authenticated session found. Please sign in again.");
-      }
-
-      // Fetch user's profile to get agency_id if available (gracefully optional)
-      let agencyId: string | null = null;
-      try {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("agency_id")
-          .eq("id", currentUser.id)
-          .maybeSingle();
-        agencyId = profile?.agency_id ?? null;
-      } catch {
-        // Continue even if profile doesn't have agency_id yet
-      }
-
-      const insertPayload = {
-        agency_id: agencyId,
-        user_id: currentUser.id,
+      // Stored through the API, which takes who sent it from the signed-in session. The browser
+      // never writes the feedback table itself and sends no identity or status fields.
+      const { id: insertedId } = await submitFeedback({
         category: apiCategory,
-        rating: null,
-        subject: subject.trim() || null,
+        subject: subject.trim(),
         message: message.trim(),
-        attachment_url: null,
         page_url: "/dashboard/feedback",
-        user_agent: typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 500) : null,
         context_data: {
           subject: subject.trim(),
           submitted_from: "dashboard_feedback_page",
           timestamp: new Date().toISOString(),
         },
-        status: "new",
-      };
+      });
 
-      let insertedId: string | null = null;
-
-      // 1. Direct Supabase insert via client
-      const { data: insertedData, error: insertError } = await supabase
-        .from("feedback")
-        .insert(insertPayload)
-        .select("id")
-        .single();
-
-      if (insertError) {
-        // Fallback to server route /api/feedback
-        console.warn("Direct Supabase insert failed, trying /api/feedback fallback:", insertError.message);
-        const res = await fetch("/api/feedback", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            category: apiCategory,
-            subject: subject.trim(),
-            message: message.trim(),
-            page_url: "/dashboard/feedback",
-            context_data: insertPayload.context_data,
-          }),
-        });
-        const apiRes = await res.json().catch(() => ({}));
-        if (!res.ok || !apiRes.ok) {
-          throw insertError;
-        }
-        insertedId = apiRes.id;
-      } else {
-        insertedId = insertedData?.id;
-      }
-
-      const insertedItem: FeedbackItem = {
-        id: insertedId || `fb-${Date.now()}`,
-        category,
-        subject: subject.trim(),
-        message: message.trim(),
-        author: currentUser.email || "you@agency.com",
-        createdAt: new Date().toISOString().split("T")[0],
-        status: "Open",
-        upvotes: 1,
-      };
-
-      // Add to list and clear form
-      setFeedbackList((prev) => [insertedItem, ...prev]);
-      setMyFeedback((prev) => [insertedItem, ...prev]);
+      // Only reached when the row was really stored (insertedId comes from the database).
+      if (!insertedId) throw new Error("Database insert failed");
       setSubject("");
       setMessage("");
       setSubmitted(true);
@@ -251,12 +153,6 @@ export default function FeedbackPage() {
     }
   };
 
-  const handleUpvote = (id: string) => {
-    setFeedbackList((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, upvotes: item.upvotes + 1 } : item))
-    );
-  };
-
  return (
  <div className="mx-auto w-full max-w-[1240px] animate-fade-in space-y-10 px-4 pb-24 pt-6 font-sans md:px-8 md:pt-9 xl:px-10">
  {/* Page Header */}
@@ -270,7 +166,7 @@ export default function FeedbackPage() {
  {submitted && (
  <div role="status" className="flex items-center gap-2 rounded-panel bg-positive-soft p-3.5 text-support font-medium text-positive">
  <CheckCircle2 size={16} />
- <span>Feedback submitted successfully.</span>
+ <span>Feedback sent. It is saved and listed under Your feedback.</span>
  </div>
  )}
 
@@ -293,7 +189,7 @@ export default function FeedbackPage() {
  </label>
  <select
  value={category}
- onChange={(e) => setCategory(e.target.value as FeedbackItem["category"])}
+ onChange={(e) => setCategory(e.target.value as FormCategory)}
  className="w-full rounded-panel border border-line bg-canvas px-3.5 py-2 text-caption text-ink focus:outline-none focus:border-line-strong"
  >
  <option value="Feature Request">Feature Request</option>
@@ -341,27 +237,31 @@ export default function FeedbackPage() {
  </form>
  </div>
 
- {/* Existing Feedback Board (7 Cols) */}
+ {/* Your real submissions (7 Cols) */}
  <div className="lg:col-span-7 space-y-4">
  <div className="flex flex-wrap items-baseline justify-between gap-2">
- <h2 className="text-[1.0625rem] font-semibold leading-6 text-ink">What feedback looks like</h2>
- <span className="rounded-control border border-dashed border-line-strong px-2 py-0.5 text-caption text-ink-3">Examples, not real requests</span>
+ <h2 className="text-[1.0625rem] font-semibold leading-6 text-ink">Your feedback</h2>
  </div>
 
+ {listState === "loading" ? (
+ <div className="rounded-panel border border-dashed border-line p-10 text-center text-ink-2 text-body">
+ <Loader2 size={16} className="mx-auto animate-spin" />
+ </div>
+ ) : listState === "error" ? (
+ <div role="alert" className="rounded-panel border border-dashed border-line p-10 text-center text-ink-2 text-body">
+ Your feedback couldn&apos;t be loaded right now.
+ </div>
+ ) : myFeedback.length === 0 ? (
+ <div className="rounded-panel border border-dashed border-line p-10 text-center text-ink-2 text-body">
+ You haven&apos;t submitted any feedback yet.
+ </div>
+ ) : (
  <div className="space-y-3">
- {feedbackList.map((item) => (
+ {myFeedback.map((item) => (
  <div
  key={item.id}
  className="bg-surface rounded-panel border border-line p-5 flex items-start gap-4"
  >
- <button
- onClick={() => handleUpvote(item.id)}
- className="flex flex-col items-center justify-center rounded-panel bg-surface-2 hover:bg-brand-soft hover:text-ink border border-line px-3 py-2 text-ink-3 transition-colors shrink-0"
- >
- <ThumbsUp size={14} />
- <span className="text-caption font-semibold mt-1">{item.upvotes}</span>
- </button>
-
  <div className="flex-1 min-w-0">
  <div className="flex items-center gap-2 flex-wrap mb-1">
  <span className="text-caption font-semibold px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
@@ -377,59 +277,18 @@ export default function FeedbackPage() {
  </div>
 
  <h3 className="text-body font-semibold text-ink">{item.subject}</h3>
- <p className="text-caption text-ink-2 mt-1">{item.message}</p>
+ <p className="text-caption text-ink-2 mt-1 whitespace-pre-wrap">{item.message}</p>
 
  <div className="mt-3 flex items-center justify-between text-caption text-ink-2">
- <span>Submitted by {item.author}</span>
+ <span>Submitted by you</span>
  <span>{item.createdAt}</span>
  </div>
  </div>
  </div>
  ))}
  </div>
+ )}
  </div>
- </div>
-
- {/* My Submitted Feedback Section */}
- <div className="mt-12 pt-8 border-t border-line space-y-6">
-   <h2 className="text-[1.0625rem] font-semibold leading-6 text-ink">Your feedback</h2>
-   
-   {myFeedback.length === 0 ? (
-     <div className="rounded-panel border border-dashed border-line p-10 text-center text-ink-2 text-body">
-       You haven't submitted any feedback yet.
-     </div>
-   ) : (
-     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-       {myFeedback.map((item) => (
-         <div key={item.id} className="bg-surface rounded-panel border border-line p-5 flex flex-col justify-between gap-4">
-            <div className="space-y-3">
-               <div className="flex items-center justify-between gap-2 flex-wrap">
-                 <span className="text-caption font-semibold px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
-                   {item.category}
-                 </span>
-                 <span className={`text-caption font-semibold px-2 py-0.5 rounded ${
-                   item.status === "Resolved" ? "bg-positive-soft text-positive" :
-                   item.status === "In Review" ? "bg-info-soft text-info" :
-                   "bg-surface-2 text-ink-2"
-                 }`}>
-                   {item.status}
-                 </span>
-               </div>
-               
-               <div>
-                 <h3 className="text-body font-semibold text-ink">{item.subject}</h3>
-                 <p className="text-caption text-ink-2 mt-1 whitespace-pre-wrap leading-relaxed">{item.message}</p>
-               </div>
-            </div>
-            
-            <div className="pt-3 border-t border-line/40 flex items-center justify-between text-caption text-ink-2">
-               <span>Submitted by you</span>
-               <span>{item.createdAt}</span>
-            </div>
-         </div>
-       ))}
-     </div>
-   )}
  </div>
  </div>
  );

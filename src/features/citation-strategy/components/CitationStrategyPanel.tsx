@@ -152,7 +152,7 @@ export default function CitationStrategyPanel({ snapshotId, initial, competitorC
  )}
  </div>
  <p className="text-caption text-ink-3">
- Scrapes the top cited competitor pages and asks an LLM what content earns AI Mode citations for this query. Use the output as a citation-worthiness brief for the client&rsquo;s page.
+ Scrapes the top cited competitor pages and asks an LLM what content earns AI Overview citations for this query. Use the output as a citation-worthiness brief for the client&rsquo;s page.
  </p>
  </div>
  <button
@@ -166,7 +166,7 @@ export default function CitationStrategyPanel({ snapshotId, initial, competitorC
 
  {!hasCompetitors && !strategy && (
  <div className="rounded-control bg-surface-2 border border-line px-4 py-3 text-caption text-ink-3">
- No competitor citations to analyse yet. Run the keyword first to capture AI Mode citations.
+ No competitor citations to analyse yet. Run the keyword first to capture AI Overview citations.
  </div>
  )}
 

@@ -1,22 +1,17 @@
-// Unified brand-match logic used by both Serper (SERP) and SerpAPI (AIO) parsers.
-// Returns true if the brand or any meaningful variation appears in the given text.
+// Unified brand-match logic used by the Google AI answer parser, the ChatGPT
+// check and the evidence highlighter. Returns true only when the brand itself
+// appears as whole words — never when a generic word from the brand name
+// ("Analytics", "Solutions") or a fragment inside another word ("Nova" in
+// "Innovative") appears.
 
 export interface BrandIdentifiers {
   brand: string;        // e.g. "ValGrow Labs"
   domain: string;       // e.g. "valgrowdigital.com"
 }
 
-/**
- * Build all reasonable brand tokens to search for:
- *   - The full brand string ("valgrow labs")
- *   - Each individual word of the brand >= 4 chars ("valgrow", "labs")
- *   - The domain stem ("valgrowdigital")
- *   - The first word of the domain stem when camel/separated ("valgrow")
- */
-// Generic strings that must never become a brand token. If they slip through
-// (e.g. the user stored "https://" as their website, or the brand is just a
-// service term like "SEO"), they end up matching every citation URL or title
-// and flagging every result as the client.
+// Generic strings that must never become a brand token on their own. If they
+// slip through (e.g. the user stored "https://" as their website, or the brand
+// is just a service term like "SEO"), they would match unrelated answers.
 const TOKEN_BLOCKLIST = new Set([
   "labs", "group", "agency", "digital", "media", "inc", "ltd", "co", "company",
   "http", "https", "www", "com", "net", "org", "site", "page", "url", "blog",
@@ -25,67 +20,71 @@ const TOKEN_BLOCKLIST = new Set([
 
 const PROTOCOL_RE = /^[a-z]+:\/+/;
 
+/**
+ * Brand tokens to look for, as whole words:
+ *   - the full brand ("valgrow labs"), also written without spaces ("valgrowlabs")
+ *   - the domain stem ("valgrowdigital" from "valgrowdigital.com")
+ * Individual words of a multi-word brand are NOT tokens: "Acme Analytics"
+ * must not match "Google Analytics".
+ */
 export function buildBrandTokens({ brand, domain }: BrandIdentifiers): string[] {
   const tokens = new Set<string>();
-  const add = (s: string) => {
-    const t = s.trim().toLowerCase();
-    if (t.length < 4) return;
+  const add = (s: string, min: number) => {
+    const t = s.trim().toLowerCase().replace(/\s+/g, " ");
+    if (t.length < min) return;
     if (TOKEN_BLOCKLIST.has(t)) return;
     tokens.add(t);
   };
 
-  // Full brand + each word
   if (brand?.trim()) {
-    add(brand);
-    brand
-      .toLowerCase()
-      .split(/[\s\-_/&,.]+/)
-      .filter((w) => w.length >= 4 && !TOKEN_BLOCKLIST.has(w))
-      .forEach(add);
+    add(brand, 3);
+    if (/\s/.test(brand.trim())) add(brand.replace(/\s+/g, ""), 4);
   }
 
-  // Domain stem (e.g. "valgrowdigital" from "valgrowdigital.com") — only
-  // accept if the input looks like a real hostname (must contain a "." and
-  // not be a bare protocol fragment). A malformed website like "https://"
-  // or "example" should contribute no tokens.
+  // Domain stem — only when the input looks like a real hostname.
   const lowered = (domain ?? "").toLowerCase().replace(PROTOCOL_RE, "").replace(/^www\./, "");
   const host = lowered.split(/[\/?#]/)[0].replace(/:\d+$/, "");
   if (host.includes(".") && /[a-z]/.test(host)) {
     const stem = host.split(".")[0];
-    if (stem) add(stem);
-
-    const stemParts = stem
-      .replace(/([a-z])([A-Z])/g, "$1 $2")
-      .replace(/(\D)(\d)/g, "$1 $2")
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((w) => w.length >= 4);
-    stemParts.forEach(add);
+    if (stem) add(stem, 4);
   }
 
   return Array.from(tokens);
 }
 
-/**
- * Returns true if any brand token appears in the given text (case-insensitive,
- * word-boundary-aware where possible).
- */
-export function matchesBrand(text: string, tokens: string[]): boolean {
-  if (!text || tokens.length === 0) return false;
-  const lower = text.toLowerCase();
-  const compressed = lower.replace(/\s+/g, "");
+function escapeRegExp(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
-  for (const token of tokens) {
-    // Direct substring (handles "valgrow labs" as a phrase)
-    if (lower.includes(token)) return true;
-    // Compressed (handles "ValGrow Labs" → "valgrowlabs" → matches "valgrowlabs")
-    if (compressed.includes(token)) return true;
-  }
-  return false;
+/** Whole-word (letters/digits boundary), case-insensitive, flexible whitespace. */
+function wordPattern(token: string): string {
+  return `(?<![\\p{L}\\p{N}])${token.split(/\s+/).map(escapeRegExp).join("\\s+")}(?![\\p{L}\\p{N}])`;
+}
+
+/** True when `name` appears in `text` as whole words (case-insensitive). */
+export function mentionsName(text: string, name: string): boolean {
+  const n = (name || "").trim();
+  if (!text || n.length < 2) return false;
+  return new RegExp(wordPattern(n.toLowerCase()), "iu").test(text);
+}
+
+/** Number of whole-word occurrences of `name` in `text`. */
+export function countNameMentions(text: string, name: string): number {
+  const n = (name || "").trim();
+  if (!text || n.length < 2) return 0;
+  return (text.match(new RegExp(wordPattern(n.toLowerCase()), "giu")) ?? []).length;
 }
 
 /**
- * Quick boolean: does this domain or text mention the brand?
+ * Returns true if any brand token appears in the text as whole words.
+ */
+export function matchesBrand(text: string, tokens: string[]): boolean {
+  if (!text || tokens.length === 0) return false;
+  return tokens.some((t) => mentionsName(text, t));
+}
+
+/**
+ * Quick boolean: does this text mention the brand?
  */
 export function detectBrand(text: string, ids: BrandIdentifiers): boolean {
   return matchesBrand(text, buildBrandTokens(ids));

@@ -14,7 +14,8 @@ import { SetupPanel } from "@/components/intro/SetupPanel";
 import { INTROS } from "@/components/intro/intros";
 import { TrendLine, type TrendPoint } from "@/features/visibility/components/TrajectoryChart";
 import { FindingDrawer } from "@/features/actions/components/FindingDrawer";
-import { AREA_LABEL, auditConclusion, CHECK_COPY, checkHeadline, type AuditArea } from "@/lib/site-audit/copy";
+import { AREA_LABEL, auditConclusion, auditCoverage, CHECK_COPY, checkHeadline, coverageNote, type AuditArea } from "@/lib/site-audit/copy";
+import { isAuditProblem } from "@/lib/site-audit/checks";
 import { auditFinding, auditPriority } from "@/lib/site-audit/findings";
 import type { CheckResult } from "@/lib/site-audit/types";
 import type { PageComparison } from "@/lib/site-audit/load";
@@ -26,7 +27,8 @@ export interface SiteAuditViewData {
   project: { id: string; name: string; domain: string | null } | null;
   state: "ok" | "setup_required" | "error" | "no_project";
   errorMessage?: string;
-  completed: { id: string; score: number; pagesScanned: number; checkedAt: string; checks: CheckResult[] } | null;
+  /** `score` is null when the audit couldn't read enough of the site to score it. */
+  completed: { id: string; score: number | null; pagesScanned: number; checkedAt: string; checks: CheckResult[] } | null;
   running: { id: string } | null;
   lastFailed: { message: string; when: string } | null;
   history: TrendPoint[];
@@ -43,11 +45,13 @@ export default function SiteAuditView({ data }: { data: SiteAuditViewData }) {
 
   const checks = data.completed?.checks ?? [];
   const problems = useMemo(
-    () => checks.filter((c) => c.status !== "pass").sort((a, b) => auditPriority(b) - auditPriority(a)),
+    () => checks.filter(isAuditProblem).sort((a, b) => auditPriority(b) - auditPriority(a)),
     [checks],
   );
   const failing = problems.filter((c) => c.status === "fail").length;
-  const passing = checks.length - problems.length;
+  const passing = checks.filter((c) => c.status === "pass").length;
+  const notChecked = checks.filter((c) => c.status === "not_checked").length;
+  const partialNote = coverageNote(auditCoverage(checks));
 
   const header = (
     <PageHeader
@@ -171,16 +175,26 @@ export default function SiteAuditView({ data }: { data: SiteAuditViewData }) {
         </Notice>
       )}
 
+      {partialNote && (
+        <Notice tone="attention" title="This audit only covers part of your website">
+          {partialNote}
+        </Notice>
+      )}
+
       <>
           {/* Conclusion */}
           <MetricHero
             ariaLabel="Website health"
             label="Website health"
-            value={data.completed.score}
-            suffix="/ 100"
+            value={data.completed.score ?? "Not scored"}
+            suffix={data.completed.score !== null ? "/ 100" : undefined}
             meter={data.completed.score}
-            note={data.previous ? `${scoreChange(data.completed.score, data.previous.score)} since ${data.previous.when}` : undefined}
-            conclusion={auditConclusion(data.completed.score, problems.length, failing)}
+            note={
+              data.previous && data.completed.score !== null
+                ? `${scoreChange(data.completed.score, data.previous.score)} since ${data.previous.when}`
+                : undefined
+            }
+            conclusion={auditConclusion(data.completed.score, problems.length, failing, notChecked)}
             chart={data.history.length >= 2 ? <TrendLine points={data.history} ariaLabel="Website health score over time" /> : null}
             chartEmpty="Your score history appears here after your next audit."
           >
@@ -188,6 +202,7 @@ export default function SiteAuditView({ data }: { data: SiteAuditViewData }) {
               {failing > 0 && <StatusLabel tone="critical">{failing} to fix</StatusLabel>}
               {problems.length - failing > 0 && <StatusLabel tone="attention">{problems.length - failing} to improve</StatusLabel>}
               <StatusLabel tone="positive">{passing} looking good</StatusLabel>
+              {notChecked > 0 && <StatusLabel tone="neutral">{notChecked} not checked</StatusLabel>}
             </div>
           </MetricHero>
 
@@ -277,7 +292,11 @@ export default function SiteAuditView({ data }: { data: SiteAuditViewData }) {
                             onClick={() => setOpen(auditFinding(c, project.id))}
                             className="flex w-full items-start gap-2.5 text-left text-support text-ink-2 hover:text-ink"
                           >
-                            <StatusIcon tone={c.status === "pass" ? "positive" : c.status === "fail" ? "critical" : "attention"} />
+                            <StatusIcon
+                              tone={
+                                c.status === "pass" ? "positive" : c.status === "not_checked" ? "neutral" : c.status === "fail" ? "critical" : "attention"
+                              }
+                            />
                             <span>{checkHeadline(c)}</span>
                           </button>
                         </li>

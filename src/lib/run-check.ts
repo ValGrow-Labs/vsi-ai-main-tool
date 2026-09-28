@@ -142,9 +142,9 @@ export async function runCheckPipeline(input: RunCheckInput): Promise<RunCheckRe
     : null;
 
   // 7. DATA SOURCE IDENTIFICATION
-  const isSerpDemo = (serp.organicResults?.[0]?.url || "").includes("industry-leader.com");
-  const isAioDemo = (aio.citations?.[0]?.url || "").includes("industry-leader.com");
-  const isDemo = isSerpDemo || isAioDemo;
+  // Placeholder data exists only with VSI_ALLOW_DEMO_DATA in development; the
+  // provider clients mark it explicitly.
+  const isDemo = serp.isDemo === true || aio.isDemo === true;
   const dataSource = isDemo ? "Demo Data" : "Live SERP & AI Overview Data";
 
   const result: RunCheckResult = {

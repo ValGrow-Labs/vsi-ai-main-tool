@@ -112,7 +112,7 @@ export function geoFindings(s: GeoSummary, clientId: string, tracked: string[] =
       affected: keywordAffected(missing, clientId),
       technical: [
         { label: "Status", value: "AI answer present, brand neither named nor linked" },
-        { label: "Status codes", value: [...new Set(missing.map((m) => m.states.google_ai_mode))].join(", ") },
+        { label: "Status codes", value: [...new Set(missing.map((m) => m.states.google_ai_overview))].join(", ") },
       ],
       draft: {
         clientId,

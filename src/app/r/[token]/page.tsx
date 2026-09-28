@@ -3,6 +3,7 @@ import Image from "next/image";
 import { createClient } from "@/lib/supabase/server";
 import type { ReportContent, KeywordRow } from "@/lib/report-builder";
 import type { KeywordReportContent } from "@/lib/keyword-report-builder";
+import type { SharedReportRow } from "@/lib/report-share";
 import PrintButton from "@/components/PrintButton";
 import KeywordReportView from "@/components/KeywordReportView";
 
@@ -14,10 +15,10 @@ const GAP_LABELS: Record<string, string> = {
  ai_mentioned: "AI Mentioned",
  search_strong_ai_invisible: "AI Invisible",
  weak_double_loss: "Double Loss",
- geo_cited: "AI Mode Cited & Named",
- geo_cited_no_mention: "AI Mode Cited, Unnamed",
- geo_mentioned: "AI Mode Mentioned",
- geo_invisible: "AI Mode Invisible",
+ geo_cited: "AI Overview Cited & Named",
+ geo_cited_no_mention: "AI Overview Cited, Unnamed",
+ geo_mentioned: "AI Overview Mentioned",
+ geo_invisible: "AI Overview Invisible",
  geo_no_aio: "No AI Trigger",
  seo_ranked: "Ranked",
  seo_ranked_no_aio: "Ranked, No AI",
@@ -37,18 +38,19 @@ function shortDate(d: string | Date) {
 export default async function PublicReportPage({ params }: { params: Promise<{ token: string }> }) {
  const { token } = await params;
  const supabase = await createClient();
- const { data: row, error } = await supabase
- .from("reports")
- .select("id, type, status, generated_at, expires_at, content")
- .eq("share_token", token)
- .maybeSingle();
+ // Reports are not readable as a table without signing in (migration 043). The token is checked
+ // in the database: get_shared_report returns at most this one report, and only while the link
+ // is valid (or the viewer belongs to the report's organization).
+ const { data: rows, error } = await supabase.rpc("get_shared_report", { p_token: token });
+ const row = (Array.isArray(rows) ? rows[0] : rows) as SharedReportRow | undefined;
 
  if (error) {
  console.error("[/r/:token] supabase error:", error);
  notFound();
  }
+ // Expiry is enforced by get_shared_report: an expired link returns no row for the public, while
+ // members of the report's own organization can still open it (e.g. from the keyword page).
  if (!row) notFound();
- if (row.expires_at && new Date(row.expires_at) < new Date()) notFound();
 
  // Reports that haven't finished generating shouldn't render the report
  // shell. A small placeholder is friendlier than a 404.
@@ -247,7 +249,11 @@ export default async function PublicReportPage({ params }: { params: Promise<{ t
  ))}
  </ul>
  ) : (
- <p className="mt-3 text-body text-ink-2">Every check passed in the latest audit.</p>
+ <p className="mt-3 text-body text-ink-2">
+ {c.websiteHealth.notChecked
+ ? `No problems found in the checks we could run. ${c.websiteHealth.notChecked} couldn't be checked because some pages didn't load.`
+ : "Every check passed in the latest audit."}
+ </p>
  )}
  </Section>
  )}
@@ -255,7 +261,7 @@ export default async function PublicReportPage({ params }: { params: Promise<{ t
  {c.wins.length > 0 && (
  <Section
  title="Wins this period"
- subtitle="Keywords that improved in rank or gained AI Mode citations"
+ subtitle="Keywords that improved in rank or gained AI Overview citations"
  accent="var(--positive)"
  badge={`+${c.wins.length}`}
  badgeBg="bg-positive-soft"
@@ -428,7 +434,7 @@ function KeywordTable({
  <div className="hidden sm:grid grid-cols-12 gap-2 px-4 py-2.5 bg-surface-2 text-caption text-ink-3 font-medium border-b border-line">
  <div className="col-span-5">Keyword</div>
  <div className="col-span-2 text-center">Rank</div>
- <div className="col-span-2 text-center">AI Mode</div>
+ <div className="col-span-2 text-center">AI Overview</div>
  <div className="col-span-2 text-center">ChatGPT</div>
  <div className="col-span-1 text-right">Status</div>
  </div>
@@ -467,7 +473,7 @@ function KeywordTable({
  </div>
 
  <div className="sm:col-span-2 sm:text-center">
- <span className="text-ink-3 sm:hidden">AI Mode:</span>{" "}
+ <span className="text-ink-3 sm:hidden">AI Overview:</span>{" "}
  {r.clientCited ? (
  <span className="text-positive font-medium">✓ Cited</span>
  ) : r.mentionedInText ? (

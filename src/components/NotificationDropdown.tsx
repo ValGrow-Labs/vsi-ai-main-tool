@@ -102,12 +102,13 @@ export default function NotificationDropdown() {
     
     // Animate fade out for 200ms
     setTimeout(async () => {
-      await clearAllNotifications();
+      const cleared = await clearAllNotifications();
       setIsClearing(false);
       setShowConfirmDialog(false);
       
       // Trigger success toast message
-      setToastMessage("All notifications cleared successfully.");
+      // Only confirm what the server actually did.
+      setToastMessage(cleared ? "All notifications cleared." : "Notifications couldn't be cleared. Please try again.");
       setShowToast(true);
       setTimeout(() => {
         setShowToast(false);

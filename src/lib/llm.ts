@@ -6,16 +6,21 @@ export interface AIOIntelligence {
   topCompetitors: string[];
   insight: string;
   recommendedAction: string;
+  /** True when no model produced this: every other field is a placeholder. */
+  unavailable?: boolean;
 }
 
+// Returned when no model could analyse the answer. Marked unavailable: its
+// fields are placeholders, not findings, and callers must not show them as such.
 const FALLBACK: AIOIntelligence = {
+  unavailable: true,
   brandMentioned: false,
   mentionProminence: "none",
   mentionSentiment: "none",
   clientRankInAIO: null,
   topCompetitors: [],
   insight: "AI analysis unavailable.",
-  recommendedAction: "Review the AI Mode manually.",
+  recommendedAction: "Review the AI Overview manually.",
 };
 
 // Model chain: Llama first (user preference), then fallbacks
@@ -37,7 +42,8 @@ export async function callOpenRouter(
   model: string,
   systemPrompt: string,
   userPrompt: string,
-  apiKey: string
+  apiKey: string,
+  maxTokens = 600,
 ): Promise<{ content: string | null; rateLimited: boolean }> {
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -54,7 +60,7 @@ export async function callOpenRouter(
         { role: "user",   content: userPrompt },
       ],
       temperature: 0.1,
-      max_tokens: 600,
+      max_tokens: maxTokens,
     }),
   });
 
@@ -83,9 +89,9 @@ export async function analyzeAIO(
     "You are a JSON API for SEO intelligence analysis. " +
     "Respond with only valid JSON, no markdown, no explanation, no extra text.";
 
-  const userPrompt = `Analyze this Google AI Mode text for mentions of the brand "${brand}".
+  const userPrompt = `Analyze this Google AI Overview text for mentions of the brand "${brand}".
 
-AI Mode text:
+AI Overview text:
 """
 ${aioSnippet}
 """
@@ -150,9 +156,14 @@ export interface CitationIntelligence {
   missingFromClient: string[];  // content gaps vs competitor
   citabilityScore: number;      // 1–10 estimate of how citable this is
   summary: string;              // one sentence agency can show client
+  /** True when no model produced this: every other field is a placeholder. */
+  unavailable?: boolean;
 }
 
+// Returned when no model could analyse the page. Marked unavailable (the score
+// is a placeholder, not a real 0/10).
 const CITATION_FALLBACK: CitationIntelligence = {
+  unavailable: true,
   whyCited: [],
   contentSignals: [],
   keyTopics: [],
@@ -177,7 +188,7 @@ export async function analyzeCitation(
   // Truncate markdown to keep prompt manageable
   const content = pageMarkdown.slice(0, 4000);
 
-  const userPrompt = `Google's AI Mode cited this page for the keyword "${keyword}".
+  const userPrompt = `Google's AI Overview cited this page for the keyword "${keyword}".
 Source: ${sourceName}
 Client brand being compared against: ${clientBrand}
 

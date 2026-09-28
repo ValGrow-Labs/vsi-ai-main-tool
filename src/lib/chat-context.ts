@@ -1,6 +1,35 @@
 import { createClient } from "@/lib/supabase/server";
 import { loadProjectOverview } from "@/lib/project-summary";
 import { CHECK_COPY, checkHeadline } from "@/lib/site-audit/copy";
+import { isAuditProblem } from "@/lib/site-audit/checks";
+import { isRankObservation } from "@/lib/search";
+
+type StoredCheck = {
+  rank_position: number | null;
+  serp_first?: unknown;
+  serp_results_json?: unknown[] | null;
+  aio_present: boolean | null;
+  gap_label: string | null;
+};
+
+/** A failed or skipped lookup is "not checked", never "not ranking". */
+function isRealRank(r: StoredCheck): boolean {
+  const first = r.serp_first !== undefined ? r.serp_first : (r.serp_results_json ?? [])[0] ?? null;
+  return isRankObservation({ tracked_keyword_id: null, keyword: "", created_at: "", rank_position: r.rank_position, rank_url: null, serp_first: first });
+}
+function rankText(r: StoredCheck, found: (pos: number) => string, notFound: string): string {
+  if (!isRealRank(r)) return "not checked (the lookup failed or didn't run)";
+  return r.rank_position ? found(r.rank_position) : notFound;
+}
+function aiText(r: StoredCheck & { client_cited: boolean | null; mentioned_in_text: boolean | null }): string {
+  if (r.aio_present === null || r.aio_present === undefined) return "not checked";
+  return r.client_cited ? "cited" : r.mentioned_in_text ? "mentioned" : r.aio_present ? "invisible" : "no AI answer";
+}
+/** The stored gap label combines rank and AI answer; meaningless if either wasn't observed. */
+function gapText(r: StoredCheck): string {
+  if (!isRealRank(r) || r.aio_present === null || r.aio_present === undefined || !r.gap_label) return "unknown (incomplete check)";
+  return r.gap_label.replace(/_/g, " ");
+}
 import type { AIOCitation, OrganicResult } from "@/types/search";
 
 export type ChatScope =
@@ -90,8 +119,8 @@ export async function buildChatContext(opts: {
     }
 
     const aioText = (latest.aio_full_text ?? latest.aio_snippet ?? "") as string;
-    const prevRank = previous?.rank_position ?? null;
-    const rankDelta = latest.rank_position && prevRank ? prevRank - latest.rank_position : null;
+    const prevRank = previous && isRealRank(previous as StoredCheck) ? previous.rank_position ?? null : null;
+    const rankDelta = isRealRank(latest as StoredCheck) && latest.rank_position && prevRank ? prevRank - latest.rank_position : null;
 
     const context = [
       `# Keyword in scope`,
@@ -100,11 +129,11 @@ export async function buildChatContext(opts: {
       `Tracked keyword: "${kw.keyword}" · type: ${kw.track_type} · location: ${kw.location ?? "—"}`,
       ``,
       `# Latest snapshot (${new Date(latest.created_at).toISOString().slice(0, 10)})`,
-      `- Google rank: ${latest.rank_position ?? "Not ranking"}${rankDelta != null ? ` (was #${prevRank}, ${rankDelta >= 0 ? "+" : ""}${rankDelta})` : ""}`,
-      `- AI Mode triggered: ${latest.aio_present ? "Yes" : "No"}`,
-      `- Client cited as source: ${latest.client_cited ? "Yes" : "No"}`,
-      `- Client mentioned in AIO text: ${latest.mentioned_in_text ? "Yes" : "No"}`,
-      `- Gap classification: ${(latest.gap_label as string).replace(/_/g, " ")}`,
+      `- Google rank: ${rankText(latest as StoredCheck, (p) => `#${p}`, "Not in the top results")}${rankDelta != null ? ` (was #${prevRank}, ${rankDelta >= 0 ? "+" : ""}${rankDelta})` : ""}`,
+      `- Google AI answer: ${latest.aio_present === null || latest.aio_present === undefined ? "not checked" : latest.aio_present ? "Yes" : "No"}`,
+      `- Client cited as source: ${latest.aio_present === null || latest.aio_present === undefined ? "not checked" : latest.client_cited ? "Yes" : "No"}`,
+      `- Client mentioned in the AI answer: ${latest.aio_present === null || latest.aio_present === undefined ? "not checked" : latest.mentioned_in_text ? "Yes" : "No"}`,
+      `- Gap classification: ${gapText(latest as StoredCheck)}`,
       `- Cited competitor domains: ${(latest.cited_domains as string[] | null)?.slice(0, 10).join(", ") || "none"}`,
       ``,
       `## Google SERP — top 10 organic`,
@@ -134,7 +163,7 @@ export async function buildChatContext(opts: {
 
     const { data: results } = await supabase
       .from("search_results")
-      .select("keyword, track_type, rank_position, aio_present, client_cited, mentioned_in_text, gap_label, cited_domains, created_at")
+      .select("keyword, track_type, rank_position, aio_present, client_cited, mentioned_in_text, gap_label, cited_domains, created_at, serp_first:serp_results_json->0")
       .eq("client_id", scope.clientId)
       .order("created_at", { ascending: false })
       .limit(500);
@@ -158,10 +187,11 @@ export async function buildChatContext(opts: {
       ``,
       `# Keyword portfolio — ${latestPerKw.length} unique keywords${latestPerKw.length > MAX_KEYWORDS_PER_CLIENT ? ` (showing latest ${MAX_KEYWORDS_PER_CLIENT})` : ""}`,
       ...slice.map((r) => {
-        const rank = r.rank_position ? `#${r.rank_position}` : "—";
-        const ai = r.client_cited ? "cited" : r.mentioned_in_text ? "mentioned" : r.aio_present ? "invisible" : "no AIO";
+        const check = r as unknown as StoredCheck & { client_cited: boolean | null; mentioned_in_text: boolean | null };
+        const rank = rankText(check, (p) => `#${p}`, "not in top results");
+        const ai = aiText(check);
         const top3 = (r.cited_domains as string[] | null)?.slice(0, 3).join(", ") || "—";
-        return `- "${r.keyword}" [${r.track_type}] rank ${rank} · AI: ${ai} · gap: ${(r.gap_label as string).replace(/_/g, " ")} · cited: ${top3}`;
+        return `- "${r.keyword}" [${r.track_type}] rank ${rank} · AI: ${ai} · gap: ${gapText(check)} · cited: ${top3}`;
       }),
       ``,
       await projectFindingsContext({
@@ -237,10 +267,16 @@ async function projectFindingsContext(project: Parameters<typeof loadProjectOver
     lines.push("# Latest site audit");
     if (o.audit.state === "ok" && o.audit.completed) {
       const a = o.audit.completed;
-      lines.push(`Website health ${a.score}/100 from ${(a.completed_at ?? a.created_at).slice(0, 10)}, ${a.pages_scanned} pages checked.`);
-      for (const c of a.checks.filter((x) => x.status !== "pass")) {
+      lines.push(
+        a.score === null || a.score === undefined
+          ? `No website health score: the audit from ${(a.completed_at ?? a.created_at).slice(0, 10)} could only check part of the site (${a.pages_scanned} pages answered).`
+          : `Website health ${a.score}/100 from ${(a.completed_at ?? a.created_at).slice(0, 10)}, ${a.pages_scanned} pages checked.`,
+      );
+      for (const c of a.checks.filter(isAuditProblem)) {
         lines.push(`- (${c.status === "fail" ? "needs fixing" : "could improve"}) ${checkHeadline(c)} [${CHECK_COPY[c.id].technical}]`);
       }
+      const skipped = a.checks.filter((x) => x.status === "not_checked");
+      if (skipped.length) lines.push(`- Not checked (the pages couldn't be read): ${skipped.map((c) => CHECK_COPY[c.id].technical).join(", ")}`);
       if (o.audit.history.length >= 2) {
         const prev = o.audit.history[o.audit.history.length - 2];
         lines.push(`Previous audit score: ${prev.score} on ${prev.created_at.slice(0, 10)}.`);

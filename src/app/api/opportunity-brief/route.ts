@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireAgency } from "@/lib/auth";
+import { requireAgencyApi, apiServerError } from "@/lib/auth";
+import { UUID_PATTERN } from "@/lib/project-types";
 import { getPromptTemplate, renderPrompt } from "@/lib/prompts";
 import { checkAioTopicRelevance } from "@/lib/aio-topic-relevance";
 import { safeAiError } from "@/lib/safe-error";
@@ -129,6 +130,9 @@ function formatCitations(citations: AIOCitation[] | null | undefined): string {
 }
 
 export async function POST(req: NextRequest) {
+ const session = await requireAgencyApi();
+ if (session instanceof Response) return session;
+
  const apiKey = process.env.OPENROUTER_API_KEY;
  if (!apiKey) {
  return NextResponse.json({ error: "LLM service unavailable" }, { status: 503 });
@@ -137,11 +141,10 @@ export async function POST(req: NextRequest) {
  try {
  const body = await req.json() as { trackedKeywordId?: string };
  const { trackedKeywordId } = body;
- if (!trackedKeywordId) {
+ if (!trackedKeywordId || typeof trackedKeywordId !== "string" || !UUID_PATTERN.test(trackedKeywordId)) {
  return NextResponse.json({ error: "trackedKeywordId is required" }, { status: 400 });
  }
 
- const session = await requireAgency();
  const supabase = await createClient();
  const isSuperAdmin = session.role === "super_admin";
 
@@ -219,7 +222,7 @@ export async function POST(req: NextRequest) {
  : "ChatGPT response: (not captured for this snapshot)";
 
  const offTopicBlock = offTopic && !offTopic.onTopic
- ? `\n⚠️ AIO TOPIC MISMATCH DETECTED.\nGoogle's AI Mode answer for "${keyword}" is actually about: "${offTopic.actualTopic}". This means Google has misinterpreted the query intent. Recommend disambiguation / entity-clarification strategy (not citation injection — the AIO is not about ${clientBrand}'s industry).`
+ ? `\n⚠️ AIO TOPIC MISMATCH DETECTED.\nGoogle's AI Overview answer for "${keyword}" is actually about: "${offTopic.actualTopic}". This means Google has misinterpreted the query intent. Recommend disambiguation / entity-clarification strategy (not citation injection — the AIO is not about ${clientBrand}'s industry).`
  : "";
 
  const template = await getPromptTemplate("opportunity_brief");
@@ -284,12 +287,12 @@ export async function POST(req: NextRequest) {
  score += 1;
  if ((citations?.length ?? 0) >= 5) {
  score += 1;
- reasons.push(`${citations?.length ?? 0} AI Mode citations captured`);
+ reasons.push(`${citations?.length ?? 0} AI Overview citations captured`);
  } else {
- reasons.push("AI Mode present but few citations to analyse");
+ reasons.push("AI Overview present but few citations to analyse");
  }
  } else {
- reasons.push("No AI Mode answer for this query — brief is rank-focused only");
+ reasons.push("No AI Overview answer for this query — brief is rank-focused only");
  }
 
  if (offTopic && !offTopic.onTopic) {
@@ -340,9 +343,6 @@ export async function POST(req: NextRequest) {
 
  return NextResponse.json(brief);
  } catch (err) {
- return NextResponse.json(
- { error: err instanceof Error ? err.message : "Failed to generate brief" },
- { status: 500 }
- );
+ return apiServerError("opportunity-brief", err, "Failed to generate brief");
  }
 }

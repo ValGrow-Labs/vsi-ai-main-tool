@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { parsePage, parseSitemap, toInternalUrl, failedPage } from "./parse";
 import { analyzeRobots } from "./robots";
-import { evaluateChecks, scoreChecks } from "./checks";
+import { evaluateChecks, isAuditProblem, scoreChecks } from "./checks";
+import { canScore, classifyFetchError, computeCoverage, decideAuditStatus } from "./outcome";
+import { auditFinding, auditPriority } from "./findings";
+import { auditConclusion, auditCoverage, checkEvidence, checkHeadline, coverageNote } from "./copy";
 import type { PageFacts } from "./types";
 
 const SITE = "example.com";
@@ -114,7 +117,9 @@ describe("evaluateChecks", () => {
       sitemapFound: true,
       brokenLinks: [],
     });
-    expect(checks.filter((c) => c.status !== "pass").map((c) => c.id)).toEqual(["image_alt"]);
+    expect(checks.filter((c) => c.status !== "pass" && c.status !== "not_checked").map((c) => c.id)).toEqual(["image_alt"]);
+    // Nothing to compare against: honest not_checked instead of a pass (MO-03/MO-04).
+    expect(checks.filter((c) => c.status === "not_checked").map((c) => c.id)).toEqual(["topic_coverage", "geo_compatibility"]);
     expect(scoreChecks(checks)).toBe(99);
   });
 
@@ -182,3 +187,72 @@ describe("evaluateChecks", () => {
   });
 });
 
+
+describe("audits with missing pages", () => {
+  const cleanRobots = analyzeRobots("User-agent: *\nAllow: /");
+  const base = { homepageUrl: "https://example.com/", robots: cleanRobots, sitemapFound: true, brokenLinks: [] };
+
+  it("never reports a per-page check as pass when no page loaded (blocked homepage)", () => {
+    const checks = evaluateChecks({ ...base, pages: [failedPage("https://example.com/", 403, null)] });
+    const perPage = ["indexable", "broken_links", "page_titles", "meta_descriptions", "headings", "structured_data", "answer_content", "image_alt", "mobile_viewport", "geo_compatibility", "page_errors"];
+    for (const id of perPage) expect(checks.find((c) => c.id === id)?.status, id).toBe("not_checked");
+    const coverage = computeCoverage([failedPage("https://example.com/", 403, null)]);
+    expect(decideAuditStatus(coverage)).toBe("failed");
+    expect(canScore(coverage)).toBe(false);
+  });
+
+  it("does not count VSI fetch failures as page errors", () => {
+    const pages = [page({}), failedPage("https://example.com/slow", 0, "Timed out", "timeout"), failedPage("https://example.com/x", 0, "Address not found", "dns")];
+    const pe = evaluateChecks({ ...base, pages }).find((c) => c.id === "page_errors")!;
+    expect(pe).toMatchObject({ status: "pass", count: 0, total: 1 });
+    expect(pe.detail).toMatchObject({ couldNotFetch: 2, auditStatus: "partial" });
+  });
+
+  it("evaluates per-page checks over loaded pages only and skips homepage checks when the homepage failed", () => {
+    const pages = [failedPage("https://example.com/", 0, "Timed out", "timeout"), page({ url: "https://example.com/a", title: null })];
+    const byId = Object.fromEntries(evaluateChecks({ ...base, pages, seoSetup: { targetLanguage: "en" } }).map((c) => [c.id, c]));
+    expect(byId.page_titles).toMatchObject({ status: "fail", total: 1, affected: ["https://example.com/a"] });
+    expect(byId.geo_compatibility.status).toBe("not_checked");
+    expect(byId.indexable.status).toBe("not_checked");
+    // Business markup found on another page is real evidence.
+    expect(byId.structured_data.status).toBe("pass");
+    const coverage = computeCoverage(pages);
+    expect(decideAuditStatus(coverage)).toBe("partial");
+    expect(canScore(coverage)).toBe(false);
+  });
+
+  it("gives not_checked no penalty and no credit", () => {
+    const checks = evaluateChecks({ ...base, pages: [page({})] });
+    const withNotChecked = checks.map((c) => (c.id === "image_alt" ? { ...c, status: "not_checked" as const } : c));
+    expect(scoreChecks(withNotChecked)).toBe(100);
+    expect(isAuditProblem({ status: "not_checked" })).toBe(false);
+  });
+
+  it("never turns a not_checked check into a Next Action", () => {
+    const c = evaluateChecks({ ...base, pages: [failedPage("https://example.com/", 403, null)] }).find((x) => x.id === "page_titles")!;
+    const f = auditFinding(c, "client-1");
+    expect(f.draft).toBeNull();
+    expect(f.tone).toBe("neutral");
+    expect(auditPriority(c)).toBe(0);
+    expect(checkHeadline(c)).toBe("Page titles: not checked");
+    expect(checkEvidence(c)).toMatch(/couldn't load any pages/);
+  });
+
+  it("describes partial coverage and never praises an unscored or partial audit", () => {
+    const pages = [page({}), failedPage("https://example.com/a", 0, "Timed out", "timeout")];
+    const checks = evaluateChecks({ ...base, pages });
+    expect(auditCoverage(checks)).toMatchObject({ status: "partial", pagesLoaded: 1, pagesAttempted: 2, couldNotFetch: 1 });
+    expect(coverageNote(auditCoverage(checks))).toMatch(/1 of the 2 pages/);
+    expect(auditConclusion(null, 0, 0)).toMatch(/no health score/);
+    expect(auditConclusion(95, 0, 0, 2)).not.toMatch(/good shape/);
+    expect(auditConclusion(90, 1, 0, 1)).not.toMatch(/good shape/);
+  });
+
+  it("classifies fetch errors", () => {
+    expect(classifyFetchError(Object.assign(new Error("x"), { name: "TimeoutError" }))).toBe("timeout");
+    expect(classifyFetchError(Object.assign(new Error("x"), { code: "ENOTFOUND" }))).toBe("dns");
+    expect(classifyFetchError(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } }))).toBe("dns");
+    expect(classifyFetchError(Object.assign(new Error("x"), { name: "UnsafeUrlError" }))).toBe("unsafe");
+    expect(classifyFetchError(new TypeError("fetch failed"))).toBe("network");
+  });
+});

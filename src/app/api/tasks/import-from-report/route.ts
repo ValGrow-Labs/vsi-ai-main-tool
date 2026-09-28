@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireAgency } from "@/lib/auth";
+import { requireAgencyApi, apiServerError } from "@/lib/auth";
+import { UUID_PATTERN } from "@/lib/project-types";
 import { track } from "@/lib/track";
 import type { KeywordReportContent } from "@/lib/keyword-report-builder";
 import type { TaskGroup, TaskOwner, TaskEffort, TaskImpact, TaskContextSnapshot } from "@/lib/tasks";
@@ -8,11 +9,14 @@ import type { TaskGroup, TaskOwner, TaskEffort, TaskImpact, TaskContextSnapshot 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
+ const session = await requireAgencyApi();
+ if (session instanceof Response) return session;
  try {
  const { report_id } = (await req.json()) as { report_id?: string };
- if (!report_id) return NextResponse.json({ error: "report_id required" }, { status: 400 });
+ if (!report_id || typeof report_id !== "string" || !UUID_PATTERN.test(report_id)) {
+ return NextResponse.json({ error: "report_id required" }, { status: 400 });
+ }
 
- const session = await requireAgency();
  const supabase = await createClient();
  const isSuperAdmin = session.role === "super_admin";
 
@@ -78,7 +82,7 @@ export async function POST(req: NextRequest) {
  }
 
  const { error } = await supabase.from("tasks").insert(inserts);
- if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+ if (error) return apiServerError("tasks/import-from-report", error);
 
  track({
  agencyId: owningAgencyId,
@@ -96,6 +100,6 @@ export async function POST(req: NextRequest) {
  skipped: content.narrative.tasks.length - inserts.length,
  });
  } catch (e) {
- return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
+ return apiServerError("tasks/import-from-report", e);
  }
 }

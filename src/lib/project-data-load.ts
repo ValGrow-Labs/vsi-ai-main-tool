@@ -40,17 +40,31 @@ export const loadTrackedKeywords = cache(async (projectId: string): Promise<{ ro
   return { rows: (data ?? []) as TrackedKeywordRow[], error };
 });
 
+/** Columns from migrations that may not be applied yet; dropped on retry when missing. */
+const OPTIONAL_COLUMNS = ["rank_status"];
+
 /** The last 120 days of checks for a project, newest first. */
 export async function loadRecentResults(projectId: string, columns: string): Promise<{ data: unknown[] | null; error: { code?: string } | null }> {
   const supabase = await createClient();
   const since = new Date(Date.now() - RECENT_DAYS * 86_400_000).toISOString();
-  const { data, error } = await supabase
-    .from("search_results")
-    .select(columns)
-    .eq("client_id", projectId)
-    .gte("created_at", since)
-    .order("created_at", { ascending: false })
-    .limit(RECENT_LIMIT);
+  const run = (cols: string) =>
+    supabase
+      .from("search_results")
+      .select(cols)
+      .eq("client_id", projectId)
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(RECENT_LIMIT);
+  let { data, error } = await run(columns);
+  // Migration 042 not applied yet: read without its columns (they then count as NULL).
+  if (error && /column|42703/i.test(`${error.code ?? ""} ${error.message ?? ""}`)) {
+    const reduced = columns
+      .split(",")
+      .map((c) => c.trim())
+      .filter((c) => c && !OPTIONAL_COLUMNS.includes(c))
+      .join(", ");
+    if (reduced !== columns) ({ data, error } = await run(reduced));
+  }
   return { data: (data as unknown[] | null) ?? null, error };
 }
 

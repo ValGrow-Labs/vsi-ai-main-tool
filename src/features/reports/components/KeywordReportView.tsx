@@ -69,9 +69,9 @@ export default function KeywordReportView({ content }: { content: KeywordReportC
  {c.aioOffTopic && (
  <div className="px-8 sm:px-12 pt-6">
  <div className="rounded-control border border-critical/30 bg-critical-soft px-4 py-3">
- <p className="text-caption font-semibold text-critical mb-1">AI Mode topic mismatch</p>
+ <p className="text-caption font-semibold text-critical mb-1">AI Overview topic mismatch</p>
  <p className="text-body text-ink">
- Google&rsquo;s AI Mode answer for this query is actually about <strong>{c.aioOffTopic.actualTopic}</strong>, not the client&rsquo;s industry. The recommendations below are a disambiguation strategy, not citation injection.
+ Google&rsquo;s AI Overview answer for this query is actually about <strong>{c.aioOffTopic.actualTopic}</strong>, not the client&rsquo;s industry. The recommendations below are a disambiguation strategy, not citation injection.
  </p>
  </div>
  </div>
@@ -161,7 +161,7 @@ function SnapshotStrip({ snapshot }: { snapshot: KeywordReportSnapshot }) {
 
  const items = [
  { label: "Google rank", value: snapshot.rankPosition ? `#${snapshot.rankPosition}` : "Not in top 10" },
- { label: "AI Mode", value: snapshot.aioPresent ? "Present" : "Not triggered" },
+ { label: "AI Overview", value: snapshot.aioPresent ? "Present" : "Not triggered" },
  {
  label: "AIO citation",
  value: snapshot.clientCited ? "Cited" : snapshot.mentionedInText ? "Mentioned" : snapshot.aioPresent ? "Not mentioned" : "-",
@@ -259,13 +259,13 @@ function DetailedBody({
  )}
  </Section>
 
- <Section title="AI Mode answer">
+ <Section title="AI Overview answer">
  {snapshot.aioFullText ? (
  <div className="rounded-control bg-surface-2 border border-line p-4">
  <p className="text-body text-ink leading-relaxed whitespace-pre-line">{snapshot.aioFullText.slice(0, 2200)}</p>
  </div>
  ) : (
- <p className="text-caption text-ink-3">Google did not return an AI Mode answer for this query.</p>
+ <p className="text-caption text-ink-3">Google did not return an AI Overview answer for this query.</p>
  )}
  <p className="text-body text-ink leading-relaxed mt-3 whitespace-pre-line">{narrative.aioAnalysis}</p>
  </Section>

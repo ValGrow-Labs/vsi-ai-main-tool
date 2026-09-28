@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { useEffect, useRef, useState, use } from "react";
 import { useRouter } from "next/navigation";
 import {
   CheckCircle2,
@@ -14,8 +14,10 @@ import {
   Shield,
   Globe,
   Brain,
+  Play,
 } from "lucide-react";
 import { motion } from "framer-motion";
+import { fetchAnalysisStatus, startAnalysis } from "@/lib/analysis-status";
 
 interface StageStatusMap {
   website_analysis: "pending" | "in_progress" | "completed" | "failed" | "unconfigured";
@@ -53,55 +55,52 @@ export default function AnalysisProgressPage({ params }: { params: Promise<{ id:
   const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  /** Poll job status from API */
+  // No analysis yet for this project. Opening the page never starts one (it makes paid
+  // provider calls): the person starts it with the button below.
+  const [notStarted, setNotStarted] = useState(false);
+  const [starting, setStarting] = useState(false);
+  // After Start, a moment of "no job yet" from the status read is not "not started".
+  const startRequested = useRef(false);
+
+  /** Read the job status (GET only; never starts an analysis). */
   async function checkJobStatus() {
-    try {
-      const res = await fetch(`/api/jobs/analysis?client_id=${clientId}`);
-      if (!res.ok) {
-        // If no job was created yet, start one now
-        if (res.status === 404 && !job) {
-          const startRes = await fetch("/api/jobs/analysis", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ client_id: clientId }),
-          });
-          if (startRes.ok) {
-            const retryPoll = await fetch(`/api/jobs/analysis?client_id=${clientId}`);
-            if (retryPoll.ok) {
-              const retryData = await retryPoll.json();
-              if (retryData.job) {
-                setJob(retryData.job);
-                setError(null);
-                return;
-              }
-            }
-          }
-        }
-        throw new Error("Unable to load analysis status.");
-      }
-      const data = await res.json();
-      if (data.job) {
-        setJob(data.job);
-        setError(null);
-      }
-    } catch (err) {
-      if (!job) {
-        setError(err instanceof Error ? err.message : "Network error");
-      }
-    } finally {
-      setLoading(false);
+    const status = await fetchAnalysisStatus<AnalysisJobState>(fetch, clientId);
+    if (status.kind === "job") {
+      setJob(status.job);
+      setNotStarted(false);
+      setError(null);
+    } else if (status.kind === "not_started") {
+      if (!job && !startRequested.current) setNotStarted(true);
+    } else if (!job) {
+      setError(status.message);
     }
+    setLoading(false);
   }
 
   useEffect(() => {
+    if (notStarted) return; // nothing to poll until the person starts an analysis
     void checkJobStatus();
     if (job?.status === "completed") return;
     const interval = setInterval(() => {
       void checkJobStatus();
     }, 1800);
     return () => clearInterval(interval);
-  }, [clientId, job?.status]);
+  }, [clientId, job?.status, notStarted]);
 
+  /** Start the analysis: only ever from the Start button. */
+  async function handleStart() {
+    if (starting) return;
+    setStarting(true);
+    setError(null);
+    const result = await startAnalysis(fetch, clientId);
+    if (result.ok) {
+      startRequested.current = true;
+      setNotStarted(false); // polling resumes and shows the job
+    } else {
+      setError(result.message);
+    }
+    setStarting(false);
+  }
 
   /** Retry failed job */
   async function handleRetry() {
@@ -134,7 +133,50 @@ export default function AnalysisProgressPage({ params }: { params: Promise<{ id:
     );
   }
 
-  const isCompleted = job?.status === "completed" || job?.stage === "completed";
+  if (notStarted && !job) {
+    return (
+      <div className="mx-auto w-full max-w-[720px] animate-fade-in space-y-8 px-4 py-10 md:py-16">
+        <div className="text-center space-y-3">
+          <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-soft text-brand-strong ring-8 ring-brand-soft/40">
+            <Sparkles className="h-7 w-7 text-brand" />
+          </div>
+          <h1 className="text-3xl font-bold tracking-tight text-ink sm:text-4xl">Analysis not started</h1>
+          <p className="text-base text-ink-2 max-w-[520px] mx-auto">
+            An analysis checks the website, its Google rankings and how AI answers mention it. It uses paid search
+            and AI provider credits, so it only runs when you start it.
+          </p>
+        </div>
+
+        {error && (
+          <div className="flex items-center gap-3 rounded-xl border border-critical-soft bg-critical-soft/60 p-4 text-support text-critical">
+            <AlertCircle className="h-5 w-5 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+          <button
+            type="button"
+            onClick={handleStart}
+            disabled={starting}
+            className="flex h-11 items-center gap-2 rounded-xl bg-brand-strong px-6 text-body font-semibold text-white shadow-sm hover:bg-brand disabled:opacity-50"
+          >
+            {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+            <span>{starting ? "Starting…" : "Start analysis"}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => router.push(`/dashboard/clients/${clientId}`)}
+            className="flex h-11 items-center gap-2 rounded-xl border border-line bg-surface px-5 text-body font-medium text-ink hover:bg-surface-2"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            <span>Back to Project</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const stageStatuses = job?.stage_statuses || {
     website_analysis: "in_progress",
     seo_analysis: "pending",
@@ -144,6 +186,9 @@ export default function AnalysisProgressPage({ params }: { params: Promise<{ id:
   };
   const hasAnyFailed = Object.values(stageStatuses).some((s) => s === "failed");
   const isFailed = job?.status === "failed" || hasAnyFailed;
+  // "Complete" only when the job finished and no stage failed.
+  const isCompleted = job?.status === "completed" && !hasAnyFailed;
+  const hasUnconfigured = Object.values(stageStatuses).some((s) => s === "unconfigured");
 
   return (
     <div className="mx-auto w-full max-w-[720px] animate-fade-in space-y-8 px-4 py-10 md:py-16">
@@ -159,7 +204,9 @@ export default function AnalysisProgressPage({ params }: { params: Promise<{ id:
               Analysis complete
             </h1>
             <p className="text-base text-ink-2 max-w-[500px] mx-auto">
-              Your website has been analyzed across search engines and AI engines.
+              {hasUnconfigured
+                ? "Some checks weren't run because no search or AI provider is configured. Everything shown comes from the checks that did run."
+                : "Your website has been analyzed across search engines and AI engines."}
             </p>
           </>
         ) : isFailed ? (

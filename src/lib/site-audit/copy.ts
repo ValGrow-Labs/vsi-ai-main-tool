@@ -12,6 +12,8 @@ export const AREA_LABEL: Record<AuditArea, string> = {
 
 interface CheckCopy {
   area: AuditArea;
+  /** What the check is about, used when it couldn't run ("<subject>: not checked"). */
+  subject: string;
   /** Headline when there is a problem. Receives the check result for counts. */
   problem: (c: CheckResult) => string;
   /** Headline when the check passes. */
@@ -30,6 +32,7 @@ const pagesAre = (n: number) => `${pages(n)} ${n === 1 ? "is" : "are"}`;
 
 export const CHECK_COPY: Record<CheckId, CheckCopy> = {
   https: {
+    subject: "Secure connection",
     area: "health",
     problem: () => "Your website isn't using a secure connection",
     healthy: "Your website uses a secure connection",
@@ -40,6 +43,7 @@ export const CHECK_COPY: Record<CheckId, CheckCopy> = {
     owner: "Developer",
   },
   ai_crawlers: {
+    subject: "AI assistant access",
     area: "ai",
     problem: (c) =>
       c.detail.blocksEveryone ? "Your website blocks search engines and AI assistants" : `Your website blocks ${c.count} AI ${c.count === 1 ? "assistant" : "assistants"} from reading it`,
@@ -52,6 +56,7 @@ export const CHECK_COPY: Record<CheckId, CheckCopy> = {
     owner: "Developer",
   },
   page_errors: {
+    subject: "Pages that don't load",
     area: "health",
     problem: (c) => (c.impact === "high" ? "Your homepage isn't loading" : `${pages(c.count)} didn't load when we checked`),
     healthy: "All the pages we checked loaded correctly",
@@ -62,6 +67,7 @@ export const CHECK_COPY: Record<CheckId, CheckCopy> = {
     owner: "Developer",
   },
   indexable: {
+    subject: "Visibility in search engines",
     area: "search",
     problem: (c) => (c.impact === "high" ? "Your homepage is hidden from search engines" : `${pagesAre(c.count)} hidden from search engines`),
     healthy: "Your pages can appear in search results",
@@ -72,6 +78,7 @@ export const CHECK_COPY: Record<CheckId, CheckCopy> = {
     owner: "Developer",
   },
   broken_links: {
+    subject: "Broken links",
     area: "health",
     problem: (c) => `${c.count} ${c.count === 1 ? "link leads" : "links lead"} to a page that doesn't exist`,
     healthy: "We didn't find any broken links",
@@ -82,6 +89,7 @@ export const CHECK_COPY: Record<CheckId, CheckCopy> = {
     owner: "Developer",
   },
   page_titles: {
+    subject: "Page titles",
     area: "search",
     problem: (c) =>
       Number(c.detail.missing) > 0 ? `${pagesHave(Number(c.detail.missing))} no title in search results` : `${pagesHave(c.count)} titles that are too long or too short`,
@@ -93,6 +101,7 @@ export const CHECK_COPY: Record<CheckId, CheckCopy> = {
     owner: "Writer",
   },
   meta_descriptions: {
+    subject: "Search descriptions",
     area: "search",
     problem: (c) =>
       Number(c.detail.missing) > 0 ? `${pagesHave(Number(c.detail.missing))} no description in search results` : `${pagesHave(c.count)} search descriptions that could be improved`,
@@ -104,6 +113,7 @@ export const CHECK_COPY: Record<CheckId, CheckCopy> = {
     owner: "Writer",
   },
   headings: {
+    subject: "Page structure",
     area: "content",
     problem: (c) => `${pages(c.count)} could organize their content more clearly`,
     healthy: "Your pages are clearly organized",
@@ -114,6 +124,7 @@ export const CHECK_COPY: Record<CheckId, CheckCopy> = {
     owner: "Writer",
   },
   structured_data: {
+    subject: "Business details for search engines",
     area: "ai",
     problem: (c) => (c.status === "fail" ? "Search engines can't read your business details" : "Your business details could be clearer to search engines"),
     healthy: "Search engines can read your business details",
@@ -124,6 +135,7 @@ export const CHECK_COPY: Record<CheckId, CheckCopy> = {
     owner: "Developer",
   },
   answer_content: {
+    subject: "Answers to customer questions",
     area: "ai",
     problem: () => "Your pages don't answer common customer questions directly",
     healthy: "Your pages answer customer questions directly",
@@ -134,6 +146,7 @@ export const CHECK_COPY: Record<CheckId, CheckCopy> = {
     owner: "Writer",
   },
   image_alt: {
+    subject: "Image descriptions",
     area: "content",
     problem: (c) => `Images on ${pages(c.count)} have no text description`,
     healthy: "Your images have text descriptions",
@@ -144,6 +157,7 @@ export const CHECK_COPY: Record<CheckId, CheckCopy> = {
     owner: "Writer",
   },
   sitemap: {
+    subject: "Sitemap",
     area: "search",
     problem: () => "We couldn't find a list of your pages for search engines",
     healthy: "Search engines have a list of your pages",
@@ -154,6 +168,7 @@ export const CHECK_COPY: Record<CheckId, CheckCopy> = {
     owner: "Developer",
   },
   mobile_viewport: {
+    subject: "Phone display",
     area: "health",
     problem: (c) => `${pages(c.count)} may not display well on phones`,
     healthy: "Your pages are set up for phones",
@@ -164,6 +179,7 @@ export const CHECK_COPY: Record<CheckId, CheckCopy> = {
     owner: "Developer",
   },
   topic_coverage: {
+    subject: "Coverage of your tracked topics",
     area: "search",
     problem: (c) =>
       c.count > 0
@@ -180,6 +196,7 @@ export const CHECK_COPY: Record<CheckId, CheckCopy> = {
     owner: "Writer",
   },
   geo_compatibility: {
+    subject: "Language and region setup",
     area: "search",
     problem: (c) =>
       c.detail.issues
@@ -197,21 +214,75 @@ export const CHECK_COPY: Record<CheckId, CheckCopy> = {
 
 export function checkHeadline(c: CheckResult): string {
   const copy = CHECK_COPY[c.id];
+  if (c.status === "not_checked") return `${copy.subject}: not checked`;
   return c.status === "pass" ? copy.healthy : copy.problem(c);
 }
 
-/** One-sentence conclusion for the audit as a whole. */
-export function auditConclusion(score: number, problems: number, critical: number): string {
+/** Why a check couldn't run, in one sentence. */
+export function notCheckedReason(c: CheckResult): string {
+  const reason = c.detail.notCheckedReason;
+  return typeof reason === "string" && reason ? reason : "We couldn't gather the data this check needs.";
+}
+
+/** How much of the site a stored audit could read (kept on the page_errors check). */
+export interface StoredCoverage {
+  status: "completed" | "partial" | "failed";
+  pagesAttempted: number;
+  pagesLoaded: number;
+  homepageLoaded: boolean;
+  couldNotFetch: number;
+  blockedByWebsite: number;
+}
+
+/** Null for audits stored before coverage was recorded. */
+export function auditCoverage(checks: CheckResult[]): StoredCoverage | null {
+  const d = checks.find((c) => c.id === "page_errors")?.detail;
+  if (!d || typeof d.auditStatus !== "string") return null;
+  const num = (v: unknown) => (typeof v === "number" ? v : 0);
+  return {
+    status: d.auditStatus === "partial" || d.auditStatus === "failed" ? d.auditStatus : "completed",
+    pagesAttempted: num(d.pagesAttempted),
+    pagesLoaded: num(d.pagesLoaded),
+    homepageLoaded: d.homepageLoaded === true,
+    couldNotFetch: num(d.couldNotFetch),
+    blockedByWebsite: num(d.blockedByWebsite),
+  };
+}
+
+/** Plain-language note for a partial audit, or null when coverage was complete. */
+export function coverageNote(c: StoredCoverage | null): string | null {
+  if (!c || c.status !== "partial") return null;
+  const parts = [`We could read ${c.pagesLoaded} of the ${c.pagesAttempted} pages we tried.`];
+  if (!c.homepageLoaded) parts.push("Your homepage didn't load, so checks that depend on it weren't run.");
+  if (c.blockedByWebsite > 0) parts.push(`${pages(c.blockedByWebsite)} refused our checker.`);
+  if (c.couldNotFetch > 0) parts.push(`${pages(c.couldNotFetch)} didn't respond in time or couldn't be reached. These aren't counted as errors on your site.`);
+  return parts.join(" ");
+}
+
+/**
+ * One-sentence conclusion for the audit as a whole. With `notChecked` > 0 it
+ * never praises the site: part of it couldn't be read.
+ */
+export function auditConclusion(score: number | null, problems: number, critical: number, notChecked = 0): string {
+  if (score === null) {
+    return problems === 0
+      ? "We could only read part of your website, so there's no health score for this audit."
+      : `We could only read part of your website, so there's no health score. On the pages we could read, ${problems === 1 ? "one thing needs" : `${problems} things need`} attention.`;
+  }
+  if (problems === 0 && notChecked > 0) {
+    return `We didn't find problems on the pages we could read, but ${notChecked === 1 ? "one check" : `${notChecked} checks`} couldn't run.`;
+  }
   if (problems === 0) return "Your website is in good shape. We didn't find anything that needs fixing.";
   if (critical > 0) {
     return `${critical === 1 ? "One problem needs" : `${critical} problems need`} fixing soon, and ${problems - critical > 0 ? `${problems - critical} more could be improved` : "nothing else is urgent"}.`;
   }
-  if (score >= 85) return `Your website is in good shape, with ${problems === 1 ? "one thing" : `${problems} things`} you could improve.`;
+  if (score >= 85 && notChecked === 0) return `Your website is in good shape, with ${problems === 1 ? "one thing" : `${problems} things`} you could improve.`;
   return `Your website works, but ${problems === 1 ? "one thing is" : `${problems} things are`} holding it back.`;
 }
 
 /** The measured evidence behind a check, in one sentence. Never repeats the headline. */
 export function checkEvidence(c: CheckResult): string {
+  if (c.status === "not_checked") return `Not checked: ${notCheckedReason(c)}`;
   const of = (unit: string) => (c.total ? `${c.count} of the ${c.total} ${unit} we checked.` : "");
   switch (c.id) {
     case "https":

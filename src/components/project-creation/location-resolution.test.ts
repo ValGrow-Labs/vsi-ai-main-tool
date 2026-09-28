@@ -1,33 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LOCATIONS } from "@/types/search";
-
-const LOCATION_OPTIONS = Object.entries(LOCATIONS).map(([code, val]) => ({
-  code,
-  label: val.label,
-  country: val.label.split("(")[0].trim(),
-}));
-
-function resolveLocation(newLoc: string | undefined, defaultLocation: string, defaultCode: string) {
-  const trimmedLoc = (newLoc || "").trim();
-  const locMatch = LOCATION_OPTIONS.find(
-    (l) =>
-      l.country.toLowerCase() === trimmedLoc.toLowerCase() ||
-      l.label.toLowerCase() === trimmedLoc.toLowerCase() ||
-      l.code.toLowerCase() === trimmedLoc.toLowerCase() ||
-      (trimmedLoc.toLowerCase().includes("emirates") && l.code === "ae") ||
-      (trimmedLoc.toLowerCase().includes("dubai") && l.code === "ae") ||
-      (trimmedLoc.toLowerCase().includes("singapore") && l.code === "sg") ||
-      (trimmedLoc.toLowerCase().includes("india") && l.code === "in") ||
-      (trimmedLoc.toLowerCase().includes("united states") && l.code === "us") ||
-      (trimmedLoc.toLowerCase().includes("kingdom") && l.code === "uk") ||
-      (trimmedLoc.toLowerCase().includes("lanka") && l.code === "lk")
-  );
-
-  return {
-    location: locMatch ? locMatch.country : (trimmedLoc || defaultLocation),
-    locationCode: locMatch ? locMatch.code : defaultCode,
-  };
-}
+import { resolveLocation, matchLocationOption, isSupportedLocationCode } from "./location";
 
 describe("Location Resolution and Saving", () => {
   it("resolves Singapore correctly", () => {
@@ -62,9 +34,24 @@ describe("Location Resolution and Saving", () => {
     expect(res.locationCode).toBe("us");
   });
 
-  it("preserves fallback when empty", () => {
+  it("keeps the current values when the input is empty", () => {
     const res = resolveLocation("", "United States", "us");
     expect(res.location).toBe("United States");
     expect(res.locationCode).toBe("us");
+  });
+
+  it("never invents a market when nothing is known", () => {
+    const res = resolveLocation("", "", "");
+    expect(res.location).toBe("");
+    expect(res.locationCode).toBe("");
+    expect(matchLocationOption("")).toBeUndefined();
+    expect(matchLocationOption("Germany")).toBeUndefined();
+  });
+
+  it("recognises only supported location codes", () => {
+    expect(isSupportedLocationCode("us")).toBe(true);
+    expect(isSupportedLocationCode("")).toBe(false);
+    expect(isSupportedLocationCode("de")).toBe(false);
+    expect(isSupportedLocationCode(undefined)).toBe(false);
   });
 });

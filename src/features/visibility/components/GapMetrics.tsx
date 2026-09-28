@@ -190,13 +190,13 @@ export default function GapMetrics({ serp, aio, serpRankings = [], uniqueCompeti
       <div className="rounded-panel bg-surface-2 border border-line p-4">
         <p className="text-caption text-ink-2 leading-relaxed">
           {!clientCited && !mentionedInText && (
-            <><span className="text-critical font-semibold">Double Loss.</span> Client is unmentioned and uncited in AI Mode.</>
+            <><span className="text-critical font-semibold">Double Loss.</span> Client is unmentioned and uncited in AI Overview.</>
           )}
           {!clientCited && mentionedInText && (
             <><span className="text-info font-semibold">Partial visibility.</span> Brand name appears in the AI answer text but holds no citation link.</>
           )}
           {clientCited && r2cGap !== null && r2cGap > 0 && (
-            <><span className="text-positive font-semibold">AIO overperformer.</span> Cited higher in AI Mode than Google organic rank suggests.</>
+            <><span className="text-positive font-semibold">AIO overperformer.</span> Cited higher in AI Overview than Google organic rank suggests.</>
           )}
           {clientCited && r2cGap !== null && r2cGap < 0 && (
             <><span className="text-attention font-semibold">Citation lag.</span> Ranks higher in Google organic than AI position.</>

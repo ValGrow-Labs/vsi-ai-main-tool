@@ -10,6 +10,7 @@ import { loadVisibility } from "@/lib/visibility-load";
 import { searchFindings } from "@/lib/search";
 import { loadPageComparisons, loadSiteAudits } from "@/lib/site-audit/load";
 import { auditFinding } from "@/lib/site-audit/findings";
+import { isAuditProblem } from "@/lib/site-audit/checks";
 import type { AuditLoad } from "@/lib/site-audit/store";
 import { parseTaskSource, TASK_SOURCE_LABEL } from "@/lib/task-payload";
 import { loadProjectCompetitors, type CompetitorsLoad } from "@/lib/project-competitors-load";
@@ -82,7 +83,7 @@ export async function loadProjectOverview(project: ProjectSummary): Promise<Proj
 
   const findings: Finding[] = [];
   if (audit.state === "ok" && audit.completed) {
-    for (const c of audit.completed.checks ?? []) if (c.status !== "pass") findings.push(auditFinding(c, project.id));
+    for (const c of audit.completed.checks ?? []) if (isAuditProblem(c)) findings.push(auditFinding(c, project.id));
   }
   if (geo.state === "ok") findings.push(...geoFindings(geo.summary, project.id, tracked));
   const clarity = pageClarityFinding(comparisons, project.id);

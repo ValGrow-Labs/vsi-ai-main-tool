@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { searchSerpApi } from "@/lib/serpapi-service";
-import { requireAgency } from "@/lib/auth";
+import { requireAgencyApi } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -279,8 +279,9 @@ const LOCALIZED_CONTENT: Record<string, LocalizedItem> = {
 };
 
 export async function POST(req: NextRequest) {
+  const session = await requireAgencyApi();
+  if (session instanceof Response) return session;
   try {
-    await requireAgency();
     const body = (await req.json()) as ResearchRequestBody;
     const keyword = body.keyword?.trim();
     const location = body.location || "India";
@@ -298,17 +299,18 @@ export async function POST(req: NextRequest) {
     let organicResults: { position?: number; title: string; link: string; snippet?: string }[] = [];
     let knowledgeGraph = false;
     let serpError: string | null = null;
+    let isDemo = false;
     try {
       const serpData = await searchSerpApi(keyword, { engine: "google", gl, hl, num: 10 });
-      organicResults = serpData?.results ?? [];
-      knowledgeGraph = Boolean(serpData?.knowledge_graph);
+      // Development placeholder data is never shown as live results.
+      organicResults = serpData?.isDemo ? [] : serpData?.results ?? [];
+      knowledgeGraph = serpData?.isDemo ? false : Boolean(serpData?.knowledge_graph);
+      if (serpData?.isDemo) isDemo = true;
     } catch (err: unknown) {
-      serpError = err instanceof Error ? err.message : "Live results aren't available right now.";
+      console.error("[research] live results failed", err instanceof Error ? err.message : err);
+      serpError = "Live results aren't available right now.";
     }
 
-    // The search client returns placeholder results when no API key is set.
-    const isDemo = organicResults.some((r) => r.link.includes("industry-leader.com"));
-    if (isDemo) organicResults = [];
 
     // Likely intent: a rule-based reading of the words, shown as an estimate.
     const kwLower = keyword.toLowerCase();
@@ -335,7 +337,10 @@ export async function POST(req: NextRequest) {
       topOrganicResults: organicResults.slice(0, 10),
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Something went wrong while looking up this search.";
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    if (error instanceof SyntaxError) {
+      return NextResponse.json({ success: false, error: "Invalid request body." }, { status: 400 });
+    }
+    console.error("[research] failed", error instanceof Error ? error.message : error);
+    return NextResponse.json({ success: false, error: "Something went wrong while looking up this search." }, { status: 500 });
   }
 }

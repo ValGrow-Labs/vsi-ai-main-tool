@@ -1,23 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireAgency } from "@/lib/auth";
+import { requireAgencyApi } from "@/lib/auth";
+import { UUID_PATTERN } from "@/lib/project-types";
 import { runKeywordsForClient, type RunResult, type TrackedKeyword } from "@/lib/run-pipeline";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
+ const session = await requireAgencyApi();
+ if (session instanceof Response) return session;
  try {
- const { client_id, keyword_ids } = (await req.json()) as {
- client_id: string;
- keyword_ids?: string[];
- };
+ let body: { client_id?: unknown; keyword_ids?: unknown };
+ try {
+ body = (await req.json()) as typeof body;
+ } catch {
+ return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+ }
+ const client_id = typeof body.client_id === "string" ? body.client_id : "";
+ const keyword_ids = Array.isArray(body.keyword_ids) ? body.keyword_ids : undefined;
 
- if (!client_id) {
+ if (!client_id || !UUID_PATTERN.test(client_id)) {
  return NextResponse.json({ error: "client_id required" }, { status: 400 });
  }
+ if (keyword_ids && !keyword_ids.every((k) => typeof k === "string" && UUID_PATTERN.test(k))) {
+ return NextResponse.json({ error: "keyword_ids must be search ids" }, { status: 400 });
+ }
 
- const session = await requireAgency();
  const supabase = await createClient();
  const isSuperAdmin = session.role === "super_admin";
 

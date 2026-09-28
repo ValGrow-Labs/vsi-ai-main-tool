@@ -44,6 +44,8 @@ export interface ReportWebsiteHealth {
   pagesChecked: number;
   /** Plain-language headlines of the checks that need fixing or improving. */
   issues: string[];
+  /** Checks that couldn't run because pages didn't load (absent on older reports). */
+  notChecked?: number;
 }
 
 export interface ReportCompletedTasks {
@@ -183,12 +185,12 @@ export function buildReportContent(opts: {
     },
     aioVisibility != null
       ? {
-          label: "AI Mode visibility",
+          label: "AI Overview visibility",
           value: `${aioVisibility}%`,
           sub: `${aioCited} cited · ${aioMentioned} mentioned · ${aioInvisible} invisible (of ${aioChecked} checked)`,
           tone: aioVisibility >= 50 ? "good" : aioVisibility >= 20 ? "neutral" : "bad",
         }
-      : { label: "AI Mode visibility", value: "Off", sub: "Not turned on for this project" },
+      : { label: "AI Overview visibility", value: "Off", sub: "Not turned on for this project" },
     chatgptVisibility != null
       ? {
           label: "ChatGPT visibility",

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, type ReactNode } from "react";
 import { Edit3, Check, X } from "lucide-react";
+import { matchLocationOption } from "./location";
 
 interface BusinessInfoCardProps {
   title: string;
@@ -37,28 +38,11 @@ export function BusinessInfoCard({
   }, [value, subValue, isEditing]);
 
   // Robust location matching against country name, label, code, and common aliases
-  const matchedLoc = locationOptions.find((loc) => {
-    const target = (editSubValue || "").trim().toLowerCase();
-    if (!target) return false;
-    return (
-      loc.country.toLowerCase() === target ||
-      loc.label.toLowerCase() === target ||
-      loc.code.toLowerCase() === target ||
-      (target.includes("emirates") && loc.code === "ae") ||
-      (target.includes("dubai") && loc.code === "ae") ||
-      (target.includes("singapore") && loc.code === "sg") ||
-      (target.includes("india") && loc.code === "in") ||
-      (target.includes("united states") && loc.code === "us") ||
-      (target.includes("kingdom") && loc.code === "uk") ||
-      (target.includes("lanka") && loc.code === "lk")
-    );
-  });
+  const matchedCode = matchLocationOption(editSubValue)?.code;
+  const matchedLoc = locationOptions.find((loc) => loc.code === matchedCode);
 
-  const currentLocValue = matchedLoc
-    ? matchedLoc.country
-    : locationOptions.length > 0
-    ? locationOptions[0].country
-    : editSubValue;
+  // No recognised market: nothing is pre-selected; the user has to choose one.
+  const currentLocValue = matchedLoc ? matchedLoc.country : "";
 
   function handleSave() {
     const finalValue = editValue.trim();
@@ -131,6 +115,11 @@ export function BusinessInfoCard({
                     onChange={(e) => setEditSubValue(e.target.value)}
                     className="h-9 w-full rounded-control border border-line-strong bg-surface px-2.5 text-body text-ink focus:border-brand focus:outline-none"
                   >
+                    {!matchedLoc && (
+                      <option value="" disabled>
+                        Select a country
+                      </option>
+                    )}
                     {locationOptions.map((loc) => (
                       <option key={loc.code} value={loc.country}>
                         {loc.label}

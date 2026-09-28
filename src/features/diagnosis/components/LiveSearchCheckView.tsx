@@ -349,7 +349,7 @@ export default function LiveSearchCheckView() {
                     <MessageSquareText size={16} />
                   </div>
                   <div>
-                    <h3 className="text-body font-semibold text-ink">AI Mode Visibility</h3>
+                    <h3 className="text-body font-semibold text-ink">AI Overview Visibility</h3>
                     <p className="text-caption text-ink-3">Google AI Overview detection</p>
                   </div>
                 </div>
@@ -426,12 +426,12 @@ export default function LiveSearchCheckView() {
             totalCitationsCount={result.totalCitationsCount}
           />
 
-          {/* AI Mode Citations */}
+          {/* AI Overview Citations */}
           {result.aioPresent && result.citations.length > 0 && (
             <div className="bg-surface dark:bg-surface border border-line rounded-panel p-6">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h3 className="text-body font-semibold text-ink">AI Mode Citations &amp; Competitor Sources</h3>
+                  <h3 className="text-body font-semibold text-ink">AI Overview Citations &amp; Competitor Sources</h3>
                   <p className="text-caption text-ink-3 mt-0.5">
                     Sources and domains referenced by Google AI Overview for this search query.
                   </p>

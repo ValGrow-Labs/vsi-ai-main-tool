@@ -13,9 +13,11 @@ interface SuggestedTopicsProps {
   initialTopics: string[];
   onChange: (topics: string[]) => void;
   maxLimit?: number;
+  /** False when automatic analysis couldn't be completed: nothing was detected. */
+  analyzed?: boolean;
 }
 
-export function SuggestedTopics({ initialTopics, onChange, maxLimit = 10 }: SuggestedTopicsProps) {
+export function SuggestedTopics({ initialTopics, onChange, maxLimit = 10, analyzed = true }: SuggestedTopicsProps) {
   const [items, setItems] = useState<TopicItem[]>(() =>
     initialTopics.map((t, idx) => ({ id: `topic_${idx}_${Date.now()}`, name: t, selected: true }))
   );
@@ -65,7 +67,9 @@ export function SuggestedTopics({ initialTopics, onChange, maxLimit = 10 }: Sugg
       </div>
 
       <p className="text-support text-ink-2">
-        We detected these key business topics from your website. Select or remove topics that best match your focus.
+        {analyzed
+          ? "We detected these key business topics from your website. Select or remove topics that best match your focus."
+          : "Add the key topics your business wants to be found for."}
       </p>
 
       {/* Chip list */}

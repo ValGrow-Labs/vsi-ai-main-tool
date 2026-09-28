@@ -12,7 +12,8 @@ export interface CompetitorItem {
   selected: boolean;
 }
 
-export function detectMarketFromDomain(domain: string, fallbackMarket: string = "United States"): string {
+/** Market shown for a competitor: its country-code TLD, else the project's market, else empty (unknown). */
+export function detectMarketFromDomain(domain: string, fallbackMarket: string = ""): string {
   const d = domain.toLowerCase().trim();
   if (d.endsWith(".in") || d.endsWith(".co.in")) return "India";
   if (d.endsWith(".uk") || d.endsWith(".co.uk")) return "United Kingdom";
@@ -24,7 +25,7 @@ export function detectMarketFromDomain(domain: string, fallbackMarket: string = 
   if (d.endsWith(".lk")) return "Sri Lanka";
   if (d.endsWith(".ae") || d.endsWith(".co.ae")) return "UAE";
   if (d.endsWith(".us")) return "United States";
-  return fallbackMarket || "United States";
+  return fallbackMarket || "";
 }
 
 interface CompetitorSelectionProps {
@@ -38,7 +39,7 @@ interface CompetitorSelectionProps {
 export function CompetitorSelection({
   initialCompetitors,
   userDomain,
-  defaultMarket = "United States",
+  defaultMarket = "",
   maxPlanCompetitors = 10,
   onChange,
 }: CompetitorSelectionProps) {
@@ -225,7 +226,7 @@ export function CompetitorSelection({
 
               {/* Market */}
               <span className="rounded-control bg-surface-2 px-2.5 py-1 text-caption font-medium text-ink-2 text-right">
-                {comp.market}
+                {comp.market || "Not set"}
               </span>
 
               {/* Remove */}

@@ -281,6 +281,40 @@ describe("new account with no organization", () => {
     await expect(requireAgency()).resolves.toMatchObject({ agencyId: "org-1", agencyName: "Acme Plumbing", role: "pilot" });
   });
 
+  it("sends nobody-signed-in to the login page", async () => {
+    realSupabase();
+    state.user = null;
+    const { requireAgency } = await freshSession();
+    await expect(requireAgency()).rejects.toThrow("REDIRECT /login");
+  });
+
+  it("API routes get JSON: 401 when signed out, 403 without an organization, never a stand-in one", async () => {
+    realSupabase();
+    state.user = null;
+    let { requireAgencyApi } = await freshSession();
+    const anon = await requireAgencyApi();
+    expect(anon instanceof Response && anon.status).toBe(401);
+
+    state.user = { id: "u9", email: NEW_EMAIL };
+    state.profile = { agency_id: null, role: "pilot", is_disabled: false, agencies: null };
+    ({ requireAgencyApi } = await freshSession());
+    const noOrg = await requireAgencyApi();
+    expect(noOrg instanceof Response && noOrg.status).toBe(403);
+    expect(noOrg instanceof Response && (await noOrg.json()).code).toBe("no_organization");
+
+    state.profile = { agency_id: "org-1", role: "pilot", is_disabled: false, agencies: { name: "Acme Plumbing", is_disabled: false } };
+    ({ requireAgencyApi } = await freshSession());
+    await expect(requireAgencyApi()).resolves.toMatchObject({ agencyId: "org-1", agencyName: "Acme Plumbing" });
+  });
+
+  it("the local development session keeps its own fixture organization", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://your-project.supabase.co");
+    vi.stubEnv("NODE_ENV", "development");
+    state.cookies = { vsi_session: "authenticated", vsi_user_email: encodeURIComponent(NEW_EMAIL) };
+    const { requireAgency } = await freshSession();
+    await expect(requireAgency()).resolves.toMatchObject({ agencyId: "00000000-0000-0000-0000-000000000001" });
+  });
+
   it("still lets an explicit super admin through, with or without an organization", async () => {
     realSupabase();
     state.profile = { agency_id: null, role: "super_admin", is_disabled: false, agencies: null };

@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { AI_ENGINES, GOOGLE_AI_OVERVIEW } from "@/lib/ai-engines";
 
 type Tri = boolean | null;
 
@@ -17,8 +18,7 @@ interface Props { clientId: string; initial: Initial }
 
 const ENGINES: { key: keyof Initial; label: string; description: string; note?: string }[] = [
  { key: "rank_tracking_enabled", label: "Google rankings", description: "The project's position in Google results, plus the top 10 results." },
- { key: "ai_mode_enabled", label: "Google AI Mode", description: "Google's AI Mode answer and the sources it cites. The main AI visibility signal." },
- { key: "ai_overview_enabled", label: "Google AI Overviews", description: "Google's AI Overview answer. Optional; uses extra search credits.", note: "Optional" },
+ { key: "ai_mode_enabled", label: GOOGLE_AI_OVERVIEW, description: `${AI_ENGINES.google_ai_overview.description}, and the sources it cites. The main AI visibility signal.` },
  { key: "chatgpt_enabled", label: "ChatGPT", description: "Asks ChatGPT each search and checks whether the answer names or links to the business." },
  { key: "llm_mentions_enabled", label: "Other AI assistants", description: "Mentions across other assistants. No provider is connected yet, so leave this off.", note: "Not available yet" },
 ];

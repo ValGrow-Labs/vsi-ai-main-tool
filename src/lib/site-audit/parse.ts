@@ -1,5 +1,5 @@
 import { parse } from "node-html-parser";
-import type { PageFacts } from "./types";
+import type { FetchFailureKind, PageFacts } from "./types";
 
 const QUESTION_START = /^(how|what|why|when|where|who|which|can|do|does|is|are|should|will)\b/i;
 const SKIP_LINK = /\.(pdf|jpe?g|png|gif|webp|svg|zip|mp4|mp3|docx?|xlsx?|pptx?)(\?|$)/i;
@@ -91,6 +91,7 @@ export function parsePage(html: string, url: string, status: number, siteHost: s
     url,
     status,
     fetchError: null,
+    fetchErrorKind: null,
     isHtml: true,
     title,
     metaDescription,
@@ -114,11 +115,12 @@ export function parsePage(html: string, url: string, status: number, siteHost: s
   };
 }
 
-export function failedPage(url: string, status: number, fetchError: string | null): PageFacts {
+export function failedPage(url: string, status: number, fetchError: string | null, fetchErrorKind: FetchFailureKind | null = null): PageFacts {
   return {
     url,
     status,
     fetchError,
+    fetchErrorKind: fetchError ? (fetchErrorKind ?? "network") : null,
     isHtml: false,
     title: null,
     metaDescription: null,

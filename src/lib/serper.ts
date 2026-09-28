@@ -1,5 +1,8 @@
 import type { SerpResult, OrganicResult, Location } from "@/types/search";
 import { LOCATIONS, detectPlatform } from "@/types/search";
+import { hostMatchesDomain } from "@/lib/url-input";
+import { ProviderUnavailableError, demoDataAllowed, serpApiKey, serperKey } from "@/lib/provider-status";
+import { demoOrganicResults } from "@/lib/demo-data";
 
 interface SerperOrganicResult {
   position: number;
@@ -16,6 +19,8 @@ interface SerperResponse {
   topStories?: object[];
   images?: object[];
   videos?: object[];
+  /** Which provider answered. */
+  provider: "serper" | "serpapi" | "demo";
 }
 
 function extractDomain(url: string): string {
@@ -44,71 +49,44 @@ export interface DomainRank {
   title: string | null;
 }
 
-async function fetchOrganicResults(keyword: string, loc: typeof LOCATIONS[Location], key: string): Promise<SerperResponse> {
-  // First try Serper endpoint if a dedicated SERPER_API_KEY is configured
-  if (process.env.SERPER_API_KEY && process.env.SERPER_API_KEY !== process.env.SERPAPI_KEY && process.env.SERPER_API_KEY !== process.env.SERPAPI_API_KEY) {
+/**
+ * Google organic results. Serper.dev when a distinct Serper key is set, with
+ * SerpAPI as a real second provider. Throws ProviderUnavailableError when no
+ * provider is configured or every configured provider failed — never returns
+ * invented results (placeholder data only with VSI_ALLOW_DEMO_DATA in dev).
+ */
+async function fetchOrganicResults(keyword: string, loc: typeof LOCATIONS[Location]): Promise<SerperResponse> {
+  const serper = serperKey();
+  const serpapi = serpApiKey();
+
+  if (!serper && !serpapi) {
+    if (demoDataAllowed()) {
+      return {
+        provider: "demo",
+        organic: demoOrganicResults(keyword).map((r) => ({ position: r.position, title: r.title, link: r.url, snippet: r.snippet ?? "" })),
+      };
+    }
+    throw new ProviderUnavailableError("search", "PROVIDER_NOT_CONFIGURED", "No search provider is configured (SERPAPI_KEY or SERPER_API_KEY).");
+  }
+
+  if (serper) {
     try {
       const res = await fetch("https://google.serper.dev/search", {
         method: "POST",
-        headers: { "X-API-KEY": process.env.SERPER_API_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          q: keyword,
-          gl: loc.gl,
-          hl: loc.hl,
-          location: loc.location,
-          num: 100,
-        }),
+        headers: { "X-API-KEY": serper, "Content-Type": "application/json" },
+        body: JSON.stringify({ q: keyword, gl: loc.gl, hl: loc.hl, location: loc.location, num: 100 }),
         signal: AbortSignal.timeout(15000),
       });
-
-      if (res.ok) {
-        return await res.json();
-      }
-    } catch {
-      // Fall back to SerpAPI if Serper fails
+      if (res.status === 401 || res.status === 403) throw new ProviderUnavailableError("serper", "PROVIDER_AUTH_FAILED");
+      if (res.status === 429) throw new ProviderUnavailableError("serper", "PROVIDER_RATE_LIMITED");
+      if (!res.ok) throw new ProviderUnavailableError("serper", "PROVIDER_ERROR", `Serper HTTP status ${res.status}`);
+      const data = (await res.json()) as Omit<SerperResponse, "provider">;
+      if (!Array.isArray(data.organic)) throw new ProviderUnavailableError("serper", "INVALID_RESPONSE", "Serper response has no organic results list");
+      return { ...data, provider: "serper" };
+    } catch (err) {
+      if (!serpapi) throw err instanceof ProviderUnavailableError ? err : new ProviderUnavailableError("serper", "PROVIDER_ERROR", String(err));
+      // Fall through to SerpAPI, a real second provider.
     }
-  }
-
-  // Primary / Fallback to SerpAPI
-  const serpApiKey = process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY || process.env.SEARCHAPI_KEY || key;
-  if (!serpApiKey || !serpApiKey.trim()) {
-    const cleanKeyword = keyword.trim();
-    const words = cleanKeyword.split(/\s+/);
-    const mainSubject = words.slice(0, 3).join(" ");
-    return {
-      organic: [
-        {
-          position: 1,
-          title: `Top Rated Solutions for ${mainSubject}`,
-          link: `https://www.industry-leader.com/${encodeURIComponent(cleanKeyword.toLowerCase().replace(/\s+/g, "-"))}`,
-          snippet: `Discover top rated insights and strategies regarding ${cleanKeyword}. Find expert reviews, pricing, and comparisons.`,
-        },
-        {
-          position: 2,
-          title: `Best Services for ${mainSubject} 2026`,
-          link: `https://www.topservices.com/${encodeURIComponent(cleanKeyword.toLowerCase().replace(/\s+/g, "-"))}`,
-          snippet: `Leading provider of ${mainSubject} solutions. Trusted by global brands with proven results.`,
-        },
-        {
-          position: 3,
-          title: `${mainSubject} - Official Solutions & Pricing`,
-          link: `https://www.globalprovider.com/services`,
-          snippet: `Explore enterprise solutions for ${cleanKeyword}. Request a custom demo today.`,
-        },
-        {
-          position: 4,
-          title: `Complete Review of ${mainSubject} Solutions`,
-          link: `https://www.digitaltech-review.org/${encodeURIComponent(cleanKeyword.toLowerCase().replace(/\s+/g, "-"))}`,
-          snippet: `An in-depth analysis of ${cleanKeyword} key players, features, market presence, and benchmark performance.`,
-        },
-        {
-          position: 5,
-          title: `How to Choose the Right ${mainSubject}`,
-          link: `https://www.businessinsights.com/guides/${encodeURIComponent(cleanKeyword.toLowerCase().replace(/\s+/g, "-"))}`,
-          snippet: `Compare features, capabilities, and ROI across top-ranking ${mainSubject} providers in the market.`,
-        },
-      ],
-    };
   }
 
   const searchParams = new URLSearchParams({
@@ -117,30 +95,37 @@ async function fetchOrganicResults(keyword: string, loc: typeof LOCATIONS[Locati
     gl: loc.gl,
     hl: loc.hl,
     num: "100",
-    api_key: serpApiKey,
+    api_key: serpapi as string,
   });
+  if (loc.location) searchParams.set("location", loc.location);
 
-  if (loc.location) {
-    searchParams.set("location", loc.location);
+  const res = await fetch(`https://serpapi.com/search.json?${searchParams.toString()}`, { signal: AbortSignal.timeout(20000) });
+  if (res.status === 401 || res.status === 403) throw new ProviderUnavailableError("serpapi", "PROVIDER_AUTH_FAILED", "SerpAPI authentication error (Invalid or unauthorized API key)");
+  if (res.status === 429) throw new ProviderUnavailableError("serpapi", "PROVIDER_RATE_LIMITED", "SerpAPI rate limit exceeded");
+  if (!res.ok) throw new ProviderUnavailableError("serpapi", "PROVIDER_ERROR", `SerpApi HTTP status ${res.status}`);
+
+  let data: {
+    organic_results?: Array<{ position?: number; title?: string; link?: string; snippet?: string }>;
+    knowledge_graph?: object;
+    answer_box?: object;
+    related_questions?: object[];
+    error?: string;
+  };
+  try {
+    data = await res.json();
+  } catch {
+    throw new ProviderUnavailableError("serpapi", "INVALID_RESPONSE", "SerpAPI returned invalid JSON");
+  }
+  if (data.error) {
+    // Google genuinely had no results for this query: a real, empty result.
+    if (/hasn't returned any results|has not returned any results/i.test(data.error)) return { provider: "serpapi", organic: [] };
+    throw new ProviderUnavailableError("serpapi", "PROVIDER_ERROR", `SerpApi error: ${data.error}`);
+  }
+  if (!Array.isArray(data.organic_results)) {
+    throw new ProviderUnavailableError("serpapi", "INVALID_RESPONSE", "SerpAPI response has no organic results list");
   }
 
-  const url = `https://serpapi.com/search.json?${searchParams.toString()}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
-
-  if (res.status === 401 || res.status === 403) {
-    throw new Error("SerpAPI authentication error (Invalid or unauthorized API key)");
-  }
-  if (res.status === 429) {
-    throw new Error("SerpAPI rate limit exceeded");
-  }
-  if (!res.ok) {
-    throw new Error(`SerpApi HTTP status ${res.status}`);
-  }
-
-  const data = await res.json();
-  if (data.error) throw new Error(`SerpApi error: ${data.error}`);
-
-  const organic: SerperOrganicResult[] = (data.organic_results || []).map((r: { position?: number; title?: string; link?: string; snippet?: string }, idx: number) => ({
+  const organic: SerperOrganicResult[] = data.organic_results.map((r, idx) => ({
     position: r.position ?? idx + 1,
     title: r.title ?? "",
     link: r.link ?? "",
@@ -148,6 +133,7 @@ async function fetchOrganicResults(keyword: string, loc: typeof LOCATIONS[Locati
   }));
 
   return {
+    provider: "serpapi",
     organic,
     knowledgeGraph: data.knowledge_graph,
     answerBox: data.answer_box,
@@ -160,16 +146,13 @@ export async function fetchBulkRanks(
   domains: string[],
   location: Location
 ): Promise<DomainRank[]> {
-  const key = process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY || process.env.SERPER_API_KEY || process.env.SEARCHAPI_KEY || "";
   const loc = LOCATIONS[location];
-  const raw = await fetchOrganicResults(keyword, loc, key);
+  const raw = await fetchOrganicResults(keyword, loc);
+  if (raw.provider === "demo") throw new ProviderUnavailableError("search", "PROVIDER_NOT_CONFIGURED", "Bulk ranks need a real search provider.");
   const organic = raw.organic ?? [];
 
   return domains.map((domain) => {
-    const clean = domain.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
-    const match = organic.find(
-      (r) => extractDomain(r.link).includes(clean) || clean.includes(extractDomain(r.link))
-    );
+    const match = organic.find((r) => hostMatchesDomain(extractDomain(r.link), domain));
     return {
       domain,
       position: match?.position ?? null,
@@ -185,9 +168,7 @@ export async function fetchRank(
   location: Location,
   _brand: string = ""
 ): Promise<SerpResult> {
-  const key = process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY || process.env.SERPER_API_KEY || process.env.SEARCHAPI_KEY || "";
   const loc = LOCATIONS[location];
-  const raw = await fetchOrganicResults(keyword, loc, key);
 
   const cleanDomain = (domain ?? "")
     .toLowerCase()
@@ -195,12 +176,14 @@ export async function fetchRank(
     .replace(/^www\./, "")
     .split(/[\/?#]/)[0]
     .replace(/:\d+$/, "");
-  
+
   const validClientDomain = cleanDomain.includes(".") && /[a-z]/.test(cleanDomain) ? cleanDomain : "";
+  // Without a valid domain there is nothing to look for: that's a failed check, not "not found".
+  if (!validClientDomain) throw new ProviderUnavailableError("search", "INVALID_RESPONSE", `Cannot check rankings for an invalid domain "${domain}"`);
 
-  const matchesClient = (d: string) =>
-    !!validClientDomain && (d === validClientDomain || d.endsWith(`.${validClientDomain}`) || validClientDomain.endsWith(`.${d}`));
+  const raw = await fetchOrganicResults(keyword, loc);
 
+  const matchesClient = (host: string) => hostMatchesDomain(host, validClientDomain);
   const match = raw.organic?.find((r) => matchesClient(extractDomain(r.link)));
 
   const organicResults: OrganicResult[] = (raw.organic ?? [])
@@ -228,6 +211,7 @@ export async function fetchRank(
     rankingTitle: match?.title ?? null,
     serpFeatures: detectSerpFeatures(raw),
     organicResults,
+    provider: raw.provider,
+    isDemo: raw.provider === "demo",
   };
 }
-

@@ -2,8 +2,10 @@
 # VSI — Multi-stage Dockerfile for Coolify
 # ─────────────────────────────────────────────
 
+# Node 22 LTS: @supabase/supabase-js 2.112+ requires Node >= 22 (its "engines" field).
+
 # Stage 1: Dependencies
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 COPY package.json package-lock.json* ./
@@ -13,13 +15,17 @@ RUN npm ci --only=production --ignore-scripts && \
 
 
 # Stage 2: Build
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Disable Next.js telemetry during build
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# The runner stage copies .next/standalone, which next.config.ts only emits when
+# BUILD_STANDALONE is set (Vercel builds leave it unset and are unaffected).
+ENV BUILD_STANDALONE=1
 
 # Public Supabase URL/key are needed at build time (they're public anyway)
 ARG NEXT_PUBLIC_SUPABASE_URL
@@ -31,7 +37,7 @@ RUN npm run build
 
 
 # Stage 3: Runner (minimal production image)
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production

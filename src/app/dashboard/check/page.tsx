@@ -57,7 +57,7 @@ export default async function CheckPage({ searchParams }: { searchParams: Promis
         completed: load.completed
           ? {
               id: load.completed.id,
-              score: load.completed.score ?? 0,
+              score: load.completed.score,
               pagesScanned: load.completed.pages_scanned,
               checkedAt: formatDateTime(load.completed.completed_at ?? load.completed.created_at),
               checks: load.completed.checks ?? [],

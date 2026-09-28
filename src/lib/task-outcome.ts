@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TaskContextSnapshot, TaskOutcome } from "@/lib/tasks";
+import { isRankObservation, type RankRow } from "@/lib/search";
 
 // Map a gap_label to a coarse "good / bad / neutral" bucket so we can tell
 // whether a completed task moved the underlying signals in the right
@@ -34,6 +35,27 @@ interface CurrentForOutcome {
   rank_position: number | null;
   client_cited: boolean | null;
   gap_label: string;
+  aio_present: boolean | null;
+  rank_status?: RankRow["rank_status"];
+  serp_first?: unknown;
+}
+
+/**
+ * gap_label is derived from both the Google rank and the AI answer, so it's
+ * only meaningful when both were really observed in this row. A failed or
+ * skipped check (NULL fields) must never verify or regress a task.
+ */
+export function isComparableSnapshot(row: CurrentForOutcome): boolean {
+  const rankRow: RankRow = {
+    tracked_keyword_id: null,
+    keyword: "",
+    created_at: "",
+    rank_position: row.rank_position,
+    rank_url: null,
+    rank_status: row.rank_status ?? null,
+    serp_first: row.serp_first,
+  };
+  return isRankObservation(rankRow) && row.aio_present !== null && row.aio_present !== undefined;
 }
 
 interface SupabaseLike {
@@ -46,16 +68,22 @@ export async function runOutcomeVerification(
   supabase: SupabaseLike,
   trackedKeywordId: string,
 ): Promise<{ checked: number; updated: number }> {
-  // Latest snapshot
-  const { data: latest } = await supabase
-    .from("search_results")
-    .select("rank_position, client_cited, gap_label")
-    .eq("tracked_keyword_id", trackedKeywordId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // Latest snapshot (rank_status needs migration 042; retry without it).
+  const latestQuery = (cols: string) =>
+    supabase
+      .from("search_results")
+      .select(cols)
+      .eq("tracked_keyword_id", trackedKeywordId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+  const base = "rank_position, client_cited, gap_label, aio_present, serp_first:serp_results_json->0";
+  const withStatus = await latestQuery(`${base}, rank_status`);
+  const latest = withStatus.error ? (await latestQuery(base)).data : withStatus.data;
   if (!latest) return { checked: 0, updated: 0 };
-  const current = latest as CurrentForOutcome;
+  const current = latest as unknown as CurrentForOutcome;
+  // Not a complete, real observation: don't judge any task on it.
+  if (!isComparableSnapshot(current)) return { checked: 0, updated: 0 };
 
   // Find completed tasks for this keyword that don't yet have an outcome.
   const { data: tasks } = await supabase
@@ -85,13 +113,13 @@ export async function runOutcomeVerification(
       note = `Gap moved from "${snap.gapLabel}" → "${current.gap_label}".`;
     } else if (snap.clientCited === false && current.client_cited === true) {
       outcome = "verified";
-      note = "Client is now cited in AI Mode.";
+      note = "Client is now cited in AI Overview.";
     } else if (beforeBucket === "good" && afterBucket === "bad") {
       outcome = "regressed";
       note = `Gap regressed from "${snap.gapLabel}" → "${current.gap_label}".`;
     } else if (snap.clientCited === true && current.client_cited === false) {
       outcome = "regressed";
-      note = "Lost AI Mode citation since this task closed.";
+      note = "Lost AI Overview citation since this task closed.";
     } else if (beforeBucket !== afterBucket || snap.clientCited !== current.client_cited) {
       outcome = "neutral";
       note = "Signals shifted but no clear win/loss attribution.";

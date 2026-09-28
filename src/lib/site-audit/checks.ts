@@ -1,4 +1,5 @@
 import type { BrokenLink, CheckResult, CheckStatus, Impact, PageFacts, RobotsFacts, SeoSetupInput } from "./types";
+import { computeCoverage, decideAuditStatus, isLoaded, pageOutcome } from "./outcome";
 
 const AFFECTED_CAP = 25;
 const BUSINESS_TYPE = /(Organization|Corporation|Business|Store|Restaurant|ProfessionalService|LegalService|MedicalClinic|Agency)$/;
@@ -12,7 +13,24 @@ interface EvaluateInput {
   /** Internal links that were verified (for the broken-link check). */
   linksChecked?: number;
   seoSetup?: SeoSetupInput;
+  /** False when robots.txt couldn't be fetched (timeout, blocked, server error): the crawler check can't run. */
+  robotsChecked?: boolean;
+  /** False when every sitemap request failed on VSI's side or was refused: absence isn't proven. */
+  sitemapChecked?: boolean;
 }
+
+/** A check VSI couldn't run. `reason` is shown to the user as-is. */
+function notChecked(id: CheckResult["id"], impact: Impact, reason: string, detail: CheckResult["detail"] = {}): CheckResult {
+  return { id, impact, status: "not_checked", count: 0, total: 0, affected: [], detail: { ...detail, notCheckedReason: reason } };
+}
+
+/** A real problem (warning or fail). `not_checked` and `pass` are not problems. */
+export function isAuditProblem(c: Pick<CheckResult, "status">): boolean {
+  return c.status === "warning" || c.status === "fail";
+}
+
+const NO_PAGES = "We couldn't load any pages from your website.";
+const NO_HOMEPAGE = "We couldn't load your homepage.";
 
 function result(
   id: CheckResult["id"],
@@ -25,11 +43,23 @@ function result(
   return { id, impact, status, count: affected.length, total, affected: affected.slice(0, AFFECTED_CAP), detail };
 }
 
-export function evaluateChecks({ homepageUrl, pages, robots, sitemapFound, brokenLinks, linksChecked = 0, seoSetup }: EvaluateInput): CheckResult[] {
-
-  const loaded = pages.filter((p) => p.isHtml && p.status < 400 && !p.fetchError);
+export function evaluateChecks({
+  homepageUrl,
+  pages,
+  robots,
+  sitemapFound,
+  brokenLinks,
+  linksChecked = 0,
+  seoSetup,
+  robotsChecked = true,
+  sitemapChecked = true,
+}: EvaluateInput): CheckResult[] {
+  // Per-page checks only ever look at pages that actually loaded.
+  const loaded = pages.filter(isLoaded);
   const n = loaded.length;
   const home = pages[0];
+  const homeLoaded = isLoaded(home);
+  const coverage = computeCoverage(pages);
   const checks: CheckResult[] = [];
 
   // Secure connection
@@ -41,7 +71,9 @@ export function evaluateChecks({ homepageUrl, pages, robots, sitemapFound, broke
 
   // AI crawler access
   checks.push(
-    result(
+    !robotsChecked
+      ? notChecked("ai_crawlers", "high", "We couldn't read your robots.txt file.")
+      : result(
       "ai_crawlers",
       "high",
       robots.blocksEveryone ? "fail" : robots.blockedAgents.length > 0 ? "warning" : "pass",
@@ -51,36 +83,55 @@ export function evaluateChecks({ homepageUrl, pages, robots, sitemapFound, broke
     ),
   );
 
-  // Pages that can't load
-  const errored = pages.filter((p) => p.fetchError || p.status >= 400);
-  const homeFailed = !!home && (home.fetchError !== null || home.status >= 400);
+  // Pages that can't load. Only HTTP errors returned by the website count.
+  // VSI's own fetch failures (timeout, DNS, network) and 401/403/429 refusals
+  // are coverage gaps, not the site's page errors.
+  const errored = pages.filter((p) => pageOutcome(p) === "site_error");
+  const homeFailed = !!home && pageOutcome(home) === "site_error";
+  const answered = coverage.pagesAttempted - coverage.fetchFailures - coverage.blocked;
+  const coverageDetail = {
+    auditStatus: decideAuditStatus(coverage),
+    pagesAttempted: coverage.pagesAttempted,
+    pagesLoaded: coverage.pagesLoaded,
+    homepageLoaded: coverage.homepageLoaded,
+    couldNotFetch: coverage.fetchFailures,
+    blockedByWebsite: coverage.blocked,
+  };
   checks.push(
-    result(
-      "page_errors",
-      homeFailed ? "high" : "medium",
-      homeFailed ? "fail" : errored.length > 0 ? "warning" : "pass",
-      errored.map((p) => p.url),
-      pages.length,
-      { statuses: errored.map((p) => `${p.status || "no response"} ${p.url}`) },
-    ),
+    answered === 0
+      ? notChecked("page_errors", "medium", NO_PAGES, coverageDetail)
+      : result(
+          "page_errors",
+          homeFailed ? "high" : "medium",
+          homeFailed ? "fail" : errored.length > 0 ? "warning" : "pass",
+          errored.map((p) => p.url),
+          answered,
+          { statuses: errored.map((p) => `${p.status} ${p.url}`), ...coverageDetail },
+        ),
   );
 
   // Hidden from search
   const noindex = loaded.filter((p) => p.noindex);
-  const homeNoindex = !!home && home.noindex;
+  const homeNoindex = homeLoaded && home.noindex;
   checks.push(
-    result(
-      "indexable",
-      homeNoindex ? "high" : "medium",
-      homeNoindex ? "fail" : noindex.length > 0 ? "warning" : "pass",
-      noindex.map((p) => p.url),
-      n,
-    ),
+    n === 0
+      ? notChecked("indexable", "medium", NO_PAGES)
+      : !homeLoaded && noindex.length === 0
+        ? notChecked("indexable", "medium", `${NO_HOMEPAGE} The other pages we checked can appear in search.`)
+        : result(
+            "indexable",
+            homeNoindex ? "high" : "medium",
+            homeNoindex ? "fail" : noindex.length > 0 ? "warning" : "pass",
+            noindex.map((p) => p.url),
+            n,
+          ),
   );
 
   // Broken internal links
   checks.push(
-    result(
+    n === 0
+      ? notChecked("broken_links", "medium", NO_PAGES)
+      : result(
       "broken_links",
       "medium",
       brokenLinks.length > 0 ? "fail" : "pass",
@@ -94,7 +145,9 @@ export function evaluateChecks({ homepageUrl, pages, robots, sitemapFound, broke
   const noTitle = loaded.filter((p) => !p.title);
   const badTitleLength = loaded.filter((p) => p.title && (p.title.length < 10 || p.title.length > 65));
   checks.push(
-    result(
+    n === 0
+      ? notChecked("page_titles", "low", NO_PAGES)
+      : result(
       "page_titles",
       noTitle.length > 0 ? "medium" : "low",
       noTitle.length > 0 ? "fail" : badTitleLength.length > 0 ? "warning" : "pass",
@@ -110,7 +163,9 @@ export function evaluateChecks({ homepageUrl, pages, robots, sitemapFound, broke
     (p) => p.metaDescription && (p.metaDescription.length < 50 || p.metaDescription.length > 170),
   );
   checks.push(
-    result(
+    n === 0
+      ? notChecked("meta_descriptions", "low", NO_PAGES)
+      : result(
       "meta_descriptions",
       noDescription.length > 0 ? "medium" : "low",
       noDescription.length + badDescription.length > 0 ? "warning" : "pass",
@@ -123,7 +178,9 @@ export function evaluateChecks({ homepageUrl, pages, robots, sitemapFound, broke
   // Heading structure
   const badH1 = loaded.filter((p) => p.h1Count !== 1);
   checks.push(
-    result("headings", "medium", badH1.length > 0 ? "warning" : "pass", badH1.map((p) => p.url), n, {
+    n === 0
+      ? notChecked("headings", "medium", NO_PAGES)
+      : result("headings", "medium", badH1.length > 0 ? "warning" : "pass", badH1.map((p) => p.url), n, {
       pagesWithoutMainHeading: loaded.filter((p) => p.h1Count === 0).length,
       pagesWithSeveralMainHeadings: loaded.filter((p) => p.h1Count > 1).length,
     }),
@@ -131,10 +188,14 @@ export function evaluateChecks({ homepageUrl, pages, robots, sitemapFound, broke
 
   // Business information for search engines (structured data)
   const allTypes = [...new Set(loaded.flatMap((p) => p.jsonLdTypes))];
-  const homeHasJsonLd = !!home && home.jsonLdTypes.length > 0;
+  const homeHasJsonLd = homeLoaded && home.jsonLdTypes.length > 0;
   const hasBusinessType = allTypes.some((t) => BUSINESS_TYPE.test(t));
   checks.push(
-    result(
+    n === 0
+      ? notChecked("structured_data", "medium", NO_PAGES)
+      : !homeLoaded && !hasBusinessType
+        ? notChecked("structured_data", "medium", `${NO_HOMEPAGE} Business details are usually marked up there.`, { typesFound: allTypes })
+        : result(
       "structured_data",
       "medium",
       !homeHasJsonLd && allTypes.length === 0 ? "fail" : hasBusinessType ? "pass" : "warning",
@@ -147,10 +208,12 @@ export function evaluateChecks({ homepageUrl, pages, robots, sitemapFound, broke
   // Direct answers to customer questions
   const answerPages = loaded.filter((p) => p.jsonLdTypes.includes("FAQPage") || p.questionHeadings >= 2);
   checks.push(
-    result(
+    n === 0
+      ? notChecked("answer_content", "medium", NO_PAGES)
+      : result(
       "answer_content",
       "medium",
-      n === 0 ? "warning" : answerPages.length === 0 ? "warning" : "pass",
+      answerPages.length === 0 ? "warning" : "pass",
       answerPages.length === 0 ? loaded.map((p) => p.url) : [],
       n,
       { pagesWithAnswers: answerPages.length },
@@ -162,7 +225,9 @@ export function evaluateChecks({ homepageUrl, pages, robots, sitemapFound, broke
   const missingAlt = loaded.reduce((s, p) => s + p.imagesMissingAlt, 0);
   const altPages = loaded.filter((p) => p.imagesMissingAlt > 0);
   checks.push(
-    result(
+    n === 0
+      ? notChecked("image_alt", "low", NO_PAGES)
+      : result(
       "image_alt",
       "low",
       totalImages > 0 && missingAlt / totalImages > 0.1 ? "warning" : "pass",
@@ -173,17 +238,25 @@ export function evaluateChecks({ homepageUrl, pages, robots, sitemapFound, broke
   );
 
   // Sitemap
-  checks.push(result("sitemap", "low", sitemapFound ? "pass" : "warning", [], 1, { found: sitemapFound }));
+  checks.push(
+    sitemapFound || sitemapChecked
+      ? result("sitemap", "low", sitemapFound ? "pass" : "warning", [], 1, { found: sitemapFound })
+      : notChecked("sitemap", "low", "We couldn't reach the sitemap address on your website.", { found: false }),
+  );
 
   // Mobile display
   const noViewport = loaded.filter((p) => !p.hasViewport);
   checks.push(
-    result("mobile_viewport", "medium", noViewport.length > 0 ? "warning" : "pass", noViewport.map((p) => p.url), n),
+    n === 0
+      ? notChecked("mobile_viewport", "medium", NO_PAGES)
+      : result("mobile_viewport", "medium", noViewport.length > 0 ? "warning" : "pass", noViewport.map((p) => p.url), n),
   );
 
   // Target topic coverage (against user's tracked keywords)
   const trackedKeywords = (seoSetup?.trackedKeywords || []).map((k) => k.trim().toLowerCase()).filter(Boolean);
-  if (trackedKeywords.length > 0) {
+  if (trackedKeywords.length > 0 && n === 0) {
+    checks.push(notChecked("topic_coverage", "medium", NO_PAGES));
+  } else if (trackedKeywords.length > 0) {
     const covered: string[] = [];
     const missing: string[] = [];
 
@@ -222,11 +295,7 @@ export function evaluateChecks({ homepageUrl, pages, robots, sitemapFound, broke
       }),
     );
   } else {
-    checks.push(
-      result("topic_coverage", "low", "pass", [], 0, {
-        note: "Add tracked keywords to evaluate content topic coverage.",
-      }),
-    );
+    checks.push(notChecked("topic_coverage", "low", "Add tracked keywords to evaluate content topic coverage."));
   }
 
   // Regional and language compatibility
@@ -235,7 +304,9 @@ export function evaluateChecks({ homepageUrl, pages, robots, sitemapFound, broke
   const homeLang = (home?.htmlLang || "").trim().toLowerCase();
   const allHreflangs = loaded.flatMap((p) => p.hreflangs || []);
 
-  if (targetLang || targetCountry) {
+  if (!homeLoaded) {
+    checks.push(notChecked("geo_compatibility", "medium", `${NO_HOMEPAGE} Its language setting couldn't be read.`));
+  } else if (targetLang || targetCountry) {
     const langMatches = !targetLang || (homeLang && (homeLang.startsWith(targetLang) || targetLang.startsWith(homeLang)));
     const hasTargetHreflang = !targetCountry && !targetLang
       ? true
@@ -273,17 +344,9 @@ export function evaluateChecks({ homepageUrl, pages, robots, sitemapFound, broke
     );
   } else {
     checks.push(
-      result(
-        "geo_compatibility",
-        "low",
-        "pass",
-        [],
-        1,
-        {
-          declaredLang: homeLang || "not specified",
-          note: "No regional target configured in project settings.",
-        },
-      ),
+      notChecked("geo_compatibility", "low", "No target country or language is set in project settings.", {
+        declaredLang: homeLang || "not specified",
+      }),
     );
   }
 
@@ -292,13 +355,20 @@ export function evaluateChecks({ homepageUrl, pages, robots, sitemapFound, broke
 }
 
 
-const PENALTY: Record<Exclude<CheckStatus, "pass">, Record<Impact, number>> = {
+const PENALTY: Record<Exclude<CheckStatus, "pass" | "not_checked">, Record<Impact, number>> = {
   fail: { high: 15, medium: 8, low: 4 },
   warning: { high: 6, medium: 3, low: 1 },
 };
 
-/** 100 minus a fixed penalty per failing or warning check, floored at 0. */
+/**
+ * 100 minus a fixed penalty per failing or warning check, floored at 0.
+ * `not_checked` adds no penalty and earns no credit; whether a score should
+ * exist at all is decided by the caller (see canScore in outcome.ts).
+ */
 export function scoreChecks(checks: CheckResult[]): number {
-  const penalty = checks.reduce((sum, c) => (c.status === "pass" ? sum : sum + PENALTY[c.status][c.impact]), 0);
+  const penalty = checks.reduce(
+    (sum, c) => (c.status === "fail" || c.status === "warning" ? sum + PENALTY[c.status][c.impact] : sum),
+    0,
+  );
   return Math.max(0, Math.min(100, 100 - penalty));
 }

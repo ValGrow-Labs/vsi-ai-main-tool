@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { requireAgencyApi } from "@/lib/auth";
 import { buildChatContext, type ChatScope } from "@/lib/chat-context";
 import { generateAiResponseStream, ChatMessage } from "@/lib/ai-provider";
 import { VSI_CHAT_SYSTEM_PROMPT, CONTEXT_UNAVAILABLE } from "@/lib/chat-prompt";
@@ -10,11 +10,10 @@ export const dynamic = "force-dynamic";
 const SYSTEM_BASE_PROMPT = VSI_CHAT_SYSTEM_PROMPT;
 
 export async function POST(req: NextRequest) {
+  // 401 signed out, 403 account_disabled / no_organization.
+  const session = await requireAgencyApi();
+  if (session instanceof Response) return session;
   try {
-    const session = await getSession();
-    if (!session?.agencyId) {
-      return NextResponse.json({ error: "Your session has ended. Sign in again to use the chat." }, { status: 401 });
-    }
 
     let body: any = {};
     try {
