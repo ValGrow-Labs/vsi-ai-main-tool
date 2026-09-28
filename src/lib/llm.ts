@@ -76,6 +76,42 @@ export async function callOpenRouter(
   return { content, rateLimited: false };
 }
 
+/** OpenAI chat completion with the same result shape as callOpenRouter (JSON mode). */
+export const OPENAI_ANALYSIS_MODEL = "gpt-4o-mini";
+
+export async function callOpenAI(
+  model: string,
+  systemPrompt: string,
+  userPrompt: string,
+  apiKey: string,
+  maxTokens = 600,
+): Promise<{ content: string | null; rateLimited: boolean }> {
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.1,
+      max_tokens: maxTokens,
+      response_format: { type: "json_object" },
+    }),
+    signal: AbortSignal.timeout(45_000),
+  });
+  const data = (await res.json().catch(() => null)) as
+    | { error?: { code?: string | number; type?: string; message?: string }; choices?: { message?: { content?: string } }[] }
+    | null;
+  if (!res.ok || !data || data.error) {
+    const isRateLimit = res.status === 429 || data?.error?.code === "rate_limit_exceeded" || /rate/i.test(data?.error?.message ?? "");
+    if (!isRateLimit) throw new Error(`OpenAI HTTP ${res.status}${data?.error?.type ? ` ${data.error.type}` : ""}`);
+    return { content: null, rateLimited: true };
+  }
+  return { content: data.choices?.[0]?.message?.content?.trim() ?? null, rateLimited: false };
+}
+
 export async function analyzeAIO(
   keyword: string,
   brand: string,

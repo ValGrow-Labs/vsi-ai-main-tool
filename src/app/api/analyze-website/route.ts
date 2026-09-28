@@ -3,7 +3,7 @@ import { normaliseDomain } from "@/lib/url-input";
 import { scrapeUrl } from "@/lib/firecrawl";
 import { requireAgencyApi } from "@/lib/auth";
 import { checkUrlPolicy, UnsafeUrlError } from "@/lib/net/safe-fetch";
-import { callOpenRouter } from "@/lib/llm";
+import { callOpenAI, callOpenRouter, OPENAI_ANALYSIS_MODEL } from "@/lib/llm";
 import { failureReason, type ProviderFailureReason } from "@/lib/provider-status";
 import {
   buildProfile,
@@ -104,8 +104,10 @@ export async function POST(req: NextRequest) {
   }
 
   // No analysis service: say so. Don't fetch the site for nothing, and never invent a profile.
-  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
-  if (!apiKey) return unavailable(domain, "PROVIDER_NOT_CONFIGURED", "analysis");
+  // OpenAI when its key is set, otherwise OpenRouter.
+  const openaiKey = process.env.OPENAI_API_KEY?.trim();
+  const openrouterKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!openaiKey && !openrouterKey) return unavailable(domain, "PROVIDER_NOT_CONFIGURED", "analysis");
 
   // 1. Read the website.
   let page;
@@ -126,13 +128,11 @@ export async function POST(req: NextRequest) {
   // 2. Ask the model to read it.
   let content: string | null;
   try {
-    const res = await callOpenRouter(
-      MODEL,
-      "You are an expert AI business and SEO analyst. Respond ONLY with valid JSON.",
-      buildPrompt(domain, page.title, page.description, page.markdown ?? ""),
-      apiKey,
-      1800,
-    );
+    const system = "You are an expert AI business and SEO analyst. Respond ONLY with valid JSON.";
+    const prompt = buildPrompt(domain, page.title, page.description, page.markdown ?? "");
+    const res = openaiKey
+      ? await callOpenAI(OPENAI_ANALYSIS_MODEL, system, prompt, openaiKey, 1800)
+      : await callOpenRouter(MODEL, system, prompt, openrouterKey as string, 1800);
     if (!res.content) {
       return unavailable(domain, res.rateLimited ? "PROVIDER_RATE_LIMITED" : "PROVIDER_ERROR", "analysis");
     }

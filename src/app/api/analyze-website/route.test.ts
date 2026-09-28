@@ -4,9 +4,14 @@ import { ProviderUnavailableError } from "@/lib/provider-status";
 
 const scrapeUrl = vi.fn();
 const callOpenRouter = vi.fn();
+const callOpenAI = vi.fn();
 
 vi.mock("@/lib/firecrawl", () => ({ scrapeUrl: (...args: unknown[]) => scrapeUrl(...args) }));
-vi.mock("@/lib/llm", () => ({ callOpenRouter: (...args: unknown[]) => callOpenRouter(...args) }));
+vi.mock("@/lib/llm", () => ({
+  callOpenRouter: (...args: unknown[]) => callOpenRouter(...args),
+  callOpenAI: (...args: unknown[]) => callOpenAI(...args),
+  OPENAI_ANALYSIS_MODEL: "gpt-4o-mini",
+}));
 
 const auth: { session: Record<string, unknown> | null } = { session: null };
 vi.mock("@/lib/auth", () => ({
@@ -67,12 +72,16 @@ function req(url: unknown = "acme.com") {
 
 const realFetch = globalThis.fetch;
 const originalKey = process.env.OPENROUTER_API_KEY;
+const originalOpenAIKey = process.env.OPENAI_API_KEY;
 
 beforeEach(() => {
   auth.session = { userId: "u1", agencyId: "a1" };
   scrapeUrl.mockReset();
   callOpenRouter.mockReset();
+  callOpenAI.mockReset();
   process.env.OPENROUTER_API_KEY = "test-key";
+  // These suites exercise the OpenRouter path unless a test sets an OpenAI key.
+  delete process.env.OPENAI_API_KEY;
   // Any real network call fails the test.
   globalThis.fetch = vi.fn(async () => {
     throw new Error("Network access is not allowed in tests");
@@ -83,6 +92,51 @@ afterAll(() => {
   globalThis.fetch = realFetch;
   if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;
   else process.env.OPENROUTER_API_KEY = originalKey;
+  if (originalOpenAIKey === undefined) delete process.env.OPENAI_API_KEY;
+  else process.env.OPENAI_API_KEY = originalOpenAIKey;
+});
+
+describe("POST /api/analyze-website — OpenAI", () => {
+  it("uses OpenAI (gpt-4o-mini) when OPENAI_API_KEY is set, even if OpenRouter is also set", async () => {
+    process.env.OPENAI_API_KEY = "test-openai";
+    scrapeUrl.mockResolvedValue(PAGE);
+    callOpenAI.mockResolvedValue({ content: JSON.stringify(FULL_REPLY), rateLimited: false });
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect((await res.json()).success).toBe(true);
+    expect(callOpenAI).toHaveBeenCalledTimes(1);
+    const [model, , prompt, key] = callOpenAI.mock.calls[0] as [string, string, string, string];
+    expect(model).toBe("gpt-4o-mini");
+    expect(key).toBe("test-openai");
+    expect(prompt).toContain("acme.com");
+    expect(callOpenRouter).not.toHaveBeenCalled();
+  });
+
+  it("works with only an OpenAI key (no OpenRouter key)", async () => {
+    delete process.env.OPENROUTER_API_KEY;
+    process.env.OPENAI_API_KEY = "test-openai";
+    scrapeUrl.mockResolvedValue(PAGE);
+    callOpenAI.mockResolvedValue({ content: JSON.stringify(FULL_REPLY), rateLimited: false });
+    expect((await POST(req())).status).toBe(200);
+  });
+
+  it("an OpenAI rate limit or failure is reported as unavailable, never as an invented profile", async () => {
+    process.env.OPENAI_API_KEY = "test-openai";
+    scrapeUrl.mockResolvedValue(PAGE);
+    callOpenAI.mockResolvedValueOnce({ content: null, rateLimited: true });
+    await expectUnavailable(await POST(req()), "PROVIDER_RATE_LIMITED");
+    callOpenAI.mockRejectedValueOnce(new Error("OpenAI HTTP 500 server_error"));
+    const body = await expectUnavailable(await POST(req()), "PROVIDER_ERROR");
+    expect(JSON.stringify(body)).not.toMatch(/OpenAI HTTP|server_error/);
+  });
+
+  it("with neither key, analysis is unavailable and the site is not fetched", async () => {
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    await expectUnavailable(await POST(req()), "PROVIDER_NOT_CONFIGURED");
+    expect(scrapeUrl).not.toHaveBeenCalled();
+    expect(callOpenAI).not.toHaveBeenCalled();
+  });
 });
 
 async function expectUnavailable(res: Response, reason: string) {
