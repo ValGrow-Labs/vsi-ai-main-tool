@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Menu,
@@ -284,8 +285,15 @@ export function LandingNav() {
           onClick={() => setActiveMenu(null)}
           className="flex items-center gap-3 group focus:outline-none focus-visible:ring-2 focus-visible:ring-[#8B6818] rounded-md"
         >
-          <div className="w-9 h-9 rounded-md bg-[#8B6818] flex items-center justify-center text-white font-bold text-lg tracking-wider shadow-xs transition-transform duration-200 group-hover:scale-105">
-            <span>V</span>
+          <div className="relative w-9 h-9 rounded-lg flex items-center justify-center shrink-0 transition-transform duration-200 group-hover:scale-105">
+            <Image
+              src="/vg-logo.png"
+              alt="ValGrow Search Intelligence Logo"
+              width={36}
+              height={36}
+              priority
+              className="w-full h-full object-contain"
+            />
           </div>
           <div className="flex flex-col">
             <div className="flex items-center gap-1.5">

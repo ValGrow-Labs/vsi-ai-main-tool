@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import {
   Globe,
   Shield,
@@ -80,8 +81,14 @@ export function LandingFooter() {
           {/* Left Column: Brand Intelligence, Value Proposition & Trust (md:col-span-4) */}
           <div className="md:col-span-4 space-y-6">
             <Link href="/" className="inline-flex items-center gap-3 group">
-              <div className="w-9 h-9 rounded-md bg-[#8B6818] flex items-center justify-center text-white font-bold text-lg shadow-xs group-hover:scale-105 transition-transform">
-                <span>V</span>
+              <div className="relative w-9 h-9 rounded-lg flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                <Image
+                  src="/vg-logo.png"
+                  alt="ValGrow Search Intelligence Logo"
+                  width={36}
+                  height={36}
+                  className="w-full h-full object-contain"
+                />
               </div>
               <div className="flex flex-col">
                 <div className="flex items-center gap-1.5">
