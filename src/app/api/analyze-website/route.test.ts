@@ -5,12 +5,15 @@ import { ProviderUnavailableError } from "@/lib/provider-status";
 const scrapeUrl = vi.fn();
 const callOpenRouter = vi.fn();
 const callOpenAI = vi.fn();
+const callGroq = vi.fn();
 
 vi.mock("@/lib/firecrawl", () => ({ scrapeUrl: (...args: unknown[]) => scrapeUrl(...args) }));
 vi.mock("@/lib/llm", () => ({
   callOpenRouter: (...args: unknown[]) => callOpenRouter(...args),
   callOpenAI: (...args: unknown[]) => callOpenAI(...args),
+  callGroq: (...args: unknown[]) => callGroq(...args),
   OPENAI_ANALYSIS_MODEL: "gpt-4o-mini",
+  GROQ_ANALYSIS_MODEL: "openai/gpt-oss-120b",
 }));
 
 const auth: { session: Record<string, unknown> | null } = { session: null };
@@ -73,15 +76,18 @@ function req(url: unknown = "acme.com") {
 const realFetch = globalThis.fetch;
 const originalKey = process.env.OPENROUTER_API_KEY;
 const originalOpenAIKey = process.env.OPENAI_API_KEY;
+const originalGroqKey = process.env.GROQ_API_KEY;
 
 beforeEach(() => {
   auth.session = { userId: "u1", agencyId: "a1" };
   scrapeUrl.mockReset();
   callOpenRouter.mockReset();
   callOpenAI.mockReset();
+  callGroq.mockReset();
   process.env.OPENROUTER_API_KEY = "test-key";
   // These suites exercise the OpenRouter path unless a test sets an OpenAI key.
   delete process.env.OPENAI_API_KEY;
+  delete process.env.GROQ_API_KEY;
   // Any real network call fails the test.
   globalThis.fetch = vi.fn(async () => {
     throw new Error("Network access is not allowed in tests");
@@ -94,6 +100,8 @@ afterAll(() => {
   else process.env.OPENROUTER_API_KEY = originalKey;
   if (originalOpenAIKey === undefined) delete process.env.OPENAI_API_KEY;
   else process.env.OPENAI_API_KEY = originalOpenAIKey;
+  if (originalGroqKey === undefined) delete process.env.GROQ_API_KEY;
+  else process.env.GROQ_API_KEY = originalGroqKey;
 });
 
 describe("POST /api/analyze-website — OpenAI", () => {

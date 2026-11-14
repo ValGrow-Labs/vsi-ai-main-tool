@@ -1,10 +1,7 @@
-import Sidebar from "@/components/Sidebar";
-import Topbar from "@/components/Topbar";
-import ChatFloating from "@/components/ChatFloating";
-import PilotBanner from "@/components/PilotBanner";
 import ScrollToTop from "@/components/ScrollToTop";
 import WelcomeToast from "@/components/WelcomeToast";
 import { ProjectProvider } from "@/components/layout/ProjectProvider";
+import { DashboardShell } from "@/components/layout/DashboardShell";
 import { createClient } from "@/lib/supabase/server";
 import { requireAgency, isDummySupabase } from "@/lib/auth";
 import { getProjectContext, startProjectLoad } from "@/lib/project-context";
@@ -51,27 +48,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <OnboardingProvider state={onboarding} projectId={projectContext.active?.id ?? null}>
             <ScrollToTop />
             <WelcomeToast />
-            <div className="relative min-h-screen overflow-x-hidden bg-canvas font-sans text-ink md:flex md:h-screen">
-              <Sidebar
-                agencyName={agencyName}
-                projects={projectContext.projects}
-                activeProjectId={projectContext.active?.id ?? null}
-                userRole={session.role}
-                userEmail={session.email}
-                atClientCap={atClientCap}
-              />
-              <div className="flex min-w-0 flex-1 flex-col md:h-screen md:overflow-hidden">
-                <Topbar userEmail={session.email} userRole={session.role} agencyName={agencyName} />
-                <PilotBanner />
-                <main className="min-w-0 flex-1 md:overflow-y-auto" data-scroll-container>
-                  {/* Keyed by project: switching project remounts the page, so no state from the previous project survives. */}
-                  <div key={projectKey} className="contents">
-                    {children}
-                  </div>
-                </main>
-              </div>
-              <ChatFloating key={projectKey} />
-            </div>
+            <DashboardShell
+              agencyName={agencyName}
+              projects={projectContext.projects}
+              activeProjectId={projectContext.active?.id ?? null}
+              userRole={session.role}
+              userEmail={session.email}
+              atClientCap={atClientCap}
+              projectKey={projectKey}
+            >
+              {children}
+            </DashboardShell>
             </OnboardingProvider>
           </ProjectProvider>
         </FeedbackProvider>

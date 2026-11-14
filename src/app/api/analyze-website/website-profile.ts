@@ -273,13 +273,13 @@ export function buildProfile(
   domain: string,
   page: { title: string | null; description: string | null }
 ): ExtractedWebsiteData | null {
-  const businessType = cleanText(parsed.businessType);
-  const aboutBusiness = cleanText(parsed.aboutBusiness);
-  const suggestedTopics = cleanList(parsed.suggestedTopics, 10);
-  const suggestedKeywords = cleanKeywords(parsed.suggestedKeywords);
-  const competitiveAdvantage = cleanText(parsed.competitiveAdvantage);
-  const targetCustomers = cleanList(parsed.targetCustomers, 10);
-  const geoTopics = cleanList(parsed.geoTopics, 10);
+  const businessType = cleanText(parsed.businessType ?? parsed.business_type);
+  const aboutBusiness = cleanText(parsed.aboutBusiness ?? parsed.about);
+  const suggestedTopics = cleanList(parsed.suggestedTopics ?? parsed.suggested_topics, 10);
+  const suggestedKeywords = cleanKeywords(parsed.suggestedKeywords ?? parsed.suggested_keywords);
+  const competitiveAdvantage = cleanText(parsed.competitiveAdvantage ?? parsed.competitive_advantage);
+  const targetCustomers = cleanList(parsed.targetCustomers ?? parsed.target_customers, 5);
+  const geoTopics = cleanList(parsed.geoTopics ?? parsed.geo_topics, 10);
 
   const hasSubstance =
     businessType || aboutBusiness || competitiveAdvantage || suggestedTopics.length || suggestedKeywords.length || targetCustomers.length;
@@ -308,7 +308,7 @@ export function buildProfile(
   }
 
   return {
-    brandName: cleanText(parsed.brandName) ?? extractBrandFromDomain(domain),
+    brandName: cleanText(parsed.brandName ?? parsed.brand) ?? extractBrandFromDomain(domain),
     domain,
     businessType,
     websiteTitle: page.title?.trim() || null,
@@ -318,11 +318,11 @@ export function buildProfile(
     locationCode,
     suggestedTopics,
     suggestedKeywords,
-    sitemapUrl: cleanSitemap(parsed.sitemapUrl, domain),
+    sitemapUrl: cleanSitemap(parsed.sitemapUrl ?? parsed.sitemap_url, domain),
     competitiveAdvantage,
     aboutBusiness,
     targetCustomers,
-    suggestedCompetitors: cleanCompetitors(parsed.suggestedCompetitors, domain),
+    suggestedCompetitors: cleanCompetitors(parsed.suggestedCompetitors ?? parsed.suggested_competitors, domain),
     geoTopics,
   };
 }

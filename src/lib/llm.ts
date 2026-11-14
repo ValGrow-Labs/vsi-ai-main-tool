@@ -78,6 +78,46 @@ export async function callOpenRouter(
 
 /** OpenAI chat completion with the same result shape as callOpenRouter (JSON mode). */
 export const OPENAI_ANALYSIS_MODEL = "gpt-4o-mini";
+export const GROQ_ANALYSIS_MODEL = "openai/gpt-oss-120b";
+
+export async function callGroq(
+  model: string,
+  systemPrompt: string,
+  userPrompt: string,
+  apiKey: string,
+  maxTokens = 1200
+): Promise<{ content: string | null; rateLimited: boolean }> {
+  try {
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.1,
+        max_tokens: maxTokens,
+        response_format: { type: "json_object" },
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const data = (await res.json().catch(() => null)) as {
+      choices?: { message?: { content?: string } }[];
+      error?: { message?: string };
+    } | null;
+    if (!res.ok || !data || data.error) {
+      return { content: null, rateLimited: res.status === 429 };
+    }
+    return { content: data.choices?.[0]?.message?.content?.trim() ?? null, rateLimited: false };
+  } catch {
+    return { content: null, rateLimited: false };
+  }
+}
 
 export async function callOpenAI(
   model: string,

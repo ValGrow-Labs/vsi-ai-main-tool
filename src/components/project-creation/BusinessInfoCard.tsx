@@ -2,7 +2,7 @@
 
 import { useState, useEffect, type ReactNode } from "react";
 import { Edit3, Check, X } from "lucide-react";
-import { matchLocationOption } from "./location";
+import { LocationModal } from "./LocationModal";
 
 interface BusinessInfoCardProps {
   title: string;
@@ -12,7 +12,7 @@ interface BusinessInfoCardProps {
   onSave?: (newValue: string, newSubValue?: string) => void;
   editable?: boolean;
   type?: "text" | "select-location";
-  locationOptions?: Array<{ code: string; label: string; country: string }>;
+  isAiGenerated?: boolean;
 }
 
 export function BusinessInfoCard({
@@ -23,44 +23,28 @@ export function BusinessInfoCard({
   onSave,
   editable = true,
   type = "text",
-  locationOptions = [],
+  isAiGenerated = false,
 }: BusinessInfoCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(value);
-  const [editSubValue, setEditSubValue] = useState(subValue || "");
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // Sync state when props change outside of editing
   useEffect(() => {
     if (!isEditing) {
       setEditValue(value);
-      setEditSubValue(subValue || "");
     }
-  }, [value, subValue, isEditing]);
-
-  // Robust location matching against country name, label, code, and common aliases
-  const matchedCode = matchLocationOption(editSubValue)?.code;
-  const matchedLoc = locationOptions.find((loc) => loc.code === matchedCode);
-
-  // No recognised market: nothing is pre-selected; the user has to choose one.
-  const currentLocValue = matchedLoc ? matchedLoc.country : "";
+  }, [value, isEditing]);
 
   function handleSave() {
-    const finalValue = editValue.trim();
-    const finalSubValue = type === "select-location"
-      ? (currentLocValue || editSubValue || "").trim()
-      : (editSubValue || "").trim();
-
+    const finalVal = editValue.trim();
     if (onSave) {
-      onSave(finalValue, finalSubValue || undefined);
+      onSave(finalVal, subValue);
     }
-    setEditValue(finalValue);
-    setEditSubValue(finalSubValue);
     setIsEditing(false);
   }
 
   function handleCancel() {
     setEditValue(value);
-    setEditSubValue(subValue || "");
     setIsEditing(false);
   }
 
@@ -76,11 +60,14 @@ export function BusinessInfoCard({
           <button
             type="button"
             onClick={() => {
-              setEditValue(value);
-              setEditSubValue(subValue || "");
-              setIsEditing(true);
+              if (type === "select-location") {
+                setIsModalOpen(true);
+              } else {
+                setEditValue(value);
+                setIsEditing(true);
+              }
             }}
-            className="flex items-center gap-1 rounded-control bg-surface-2 px-2.5 py-1 text-caption font-medium text-ink-2 transition-colors hover:bg-brand-soft hover:text-brand-strong"
+            className="flex items-center gap-1 rounded-control bg-surface-2 px-2.5 py-1 text-caption font-medium text-ink-2 transition-colors hover:bg-brand-soft hover:text-brand-strong cursor-pointer"
           >
             <Edit3 className="h-3.5 w-3.5" />
             <span>Edit</span>
@@ -91,64 +78,26 @@ export function BusinessInfoCard({
       <div className="mt-3">
         {isEditing ? (
           <div className="space-y-3 pt-1">
-            {type === "select-location" ? (
-              <div className="grid gap-2 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-caption text-ink-3">Language</label>
-                  <input
-                    type="text"
-                    value={editValue}
-                    onChange={(e) => setEditValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        handleSave();
-                      }
-                    }}
-                    className="h-9 w-full rounded-control border border-line-strong bg-surface px-2.5 text-body text-ink focus:border-brand focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-caption text-ink-3">Country / Location</label>
-                  <select
-                    value={currentLocValue}
-                    onChange={(e) => setEditSubValue(e.target.value)}
-                    className="h-9 w-full rounded-control border border-line-strong bg-surface px-2.5 text-body text-ink focus:border-brand focus:outline-none"
-                  >
-                    {!matchedLoc && (
-                      <option value="" disabled>
-                        Select a country
-                      </option>
-                    )}
-                    {locationOptions.map((loc) => (
-                      <option key={loc.code} value={loc.country}>
-                        {loc.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            ) : (
-              <input
-                type="text"
-                value={editValue}
-                onChange={(e) => setEditValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    handleSave();
-                  }
-                }}
-                className="h-10 w-full rounded-control border border-line-strong bg-surface px-3 text-body text-ink focus:border-brand focus:outline-none"
-                autoFocus
-              />
-            )}
-
-            <div className="flex items-center gap-2 pt-1">
+            <input
+              type="text"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleSave();
+                } else if (e.key === "Escape") {
+                  handleCancel();
+                }
+              }}
+              autoFocus
+              className="h-9 w-full rounded-control border border-line-strong bg-surface px-2.5 text-body text-ink focus:border-brand focus:outline-none"
+            />
+            <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={handleSave}
-                className="flex items-center gap-1.5 rounded-control bg-ink px-3 py-1.5 text-caption font-medium text-white hover:bg-ink-2"
+                className="flex items-center gap-1.5 rounded-control bg-ink px-3 py-1.5 text-caption font-semibold text-white hover:bg-ink-2 transition-colors cursor-pointer"
               >
                 <Check className="h-3.5 w-3.5" />
                 <span>Save</span>
@@ -156,7 +105,7 @@ export function BusinessInfoCard({
               <button
                 type="button"
                 onClick={handleCancel}
-                className="flex items-center gap-1.5 rounded-control border border-line bg-surface px-3 py-1.5 text-caption font-medium text-ink-2 hover:bg-surface-2"
+                className="flex items-center gap-1.5 rounded-control border border-line bg-surface px-3 py-1.5 text-caption font-medium text-ink-2 hover:bg-surface-2 transition-colors cursor-pointer"
               >
                 <X className="h-3.5 w-3.5" />
                 <span>Cancel</span>
@@ -164,14 +113,45 @@ export function BusinessInfoCard({
             </div>
           </div>
         ) : (
-          <div className="space-y-1">
-            <p className="text-body font-semibold text-ink sm:text-base">{value || "Not set"}</p>
-            {subValue && (
-              <p className="text-support font-medium text-brand-strong">{subValue}</p>
+          <div className="text-body font-medium text-ink">
+            {type === "select-location" ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <span>{value || <span className="italic text-ink-3">Language not set</span>}</span>
+                {subValue ? (
+                  <>
+                    <span className="text-ink-3">•</span>
+                    <span>{subValue}</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-ink-3">•</span>
+                    <span className="italic text-ink-3">Location not set</span>
+                  </>
+                )}
+              </div>
+            ) : value ? (
+              <span>{value}</span>
+            ) : (
+              <span className="italic text-ink-3">Not set</span>
             )}
           </div>
         )}
       </div>
+
+      {type === "select-location" && (
+        <LocationModal
+          isOpen={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          currentLanguage={value}
+          currentLocation={subValue || ""}
+          currentLocationCode=""
+          onSave={(lang, loc, code) => {
+            if (onSave) {
+              onSave(lang, loc);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

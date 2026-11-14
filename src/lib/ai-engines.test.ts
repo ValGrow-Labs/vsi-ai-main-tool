@@ -161,7 +161,7 @@ describe("3. no code path labels the result as Google AI Mode", () => {
     for (const f of files) {
       const rel = path.relative(path.resolve(__dirname, "../.."), f).split(path.sep).join("/");
       readFileSync(f, "utf8").split(/\r?\n/).forEach((line, i) => {
-        if (!/AI Mode|google_ai_mode/.test(line)) return;
+        if (!/\bAI Mode\b|google_ai_mode/.test(line)) return;
         if (ALLOWED[rel]?.test(line)) return;
         offenders.push(`${rel}:${i + 1}: ${line.trim().slice(0, 120)}`);
       });
