@@ -10,9 +10,10 @@ import { formatDate } from "@/lib/format";
 import { TrendLine, type TrendPoint } from "./TrajectoryChart";
 import type { Finding } from "@/lib/findings";
 import KeywordLookup from "./KeywordLookup";
+import { LOCATIONS, type Location } from "@/types/search";
 
 export interface OverviewData {
-  project: { id: string; name: string; domain: string | null } | null;
+  project: { id: string; name: string; domain: string | null; country?: string | null; defaultLocation?: string | null } | null;
   loadError: string | null;
   website: { score: number | null; problems: number; checkedAt: string | null; running: boolean; error: string | null };
   search: { tracked: number; top10: number; improved: number; declined: number; checkedAt: string | null; error: string | null };
@@ -59,6 +60,10 @@ function headline(d: OverviewData): string {
 
 export default function OverviewView({ data }: { data: OverviewData }) {
   const { project } = data;
+  const projectCountry =
+    project?.country ||
+    (project?.defaultLocation && LOCATIONS[project.defaultLocation as Location]?.label) ||
+    "India";
 
   if (!project) {
     if (!data.loadError) return <Welcome />;
@@ -287,7 +292,7 @@ export default function OverviewView({ data }: { data: OverviewData }) {
       )}
 
       <Section title="Look up any search" description="See who Google shows for a search right now. This doesn't use your tracked searches.">
-        <KeywordLookup />
+        <KeywordLookup initialLocation={projectCountry} />
       </Section>
     </PageContainer>
   );

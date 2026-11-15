@@ -11,6 +11,7 @@ export interface ProjectSummary {
   brandName: string | null;
   serviceType: string | null;
   defaultLocation: string | null;
+  country: string | null;
   agencyId: string;
   /** Only filled for super admins, who see projects across organizations. */
   agencyName: string | null;

@@ -146,7 +146,7 @@ export async function fetchBulkRanks(
   domains: string[],
   location: Location
 ): Promise<DomainRank[]> {
-  const loc = LOCATIONS[location];
+  const loc = LOCATIONS[location] ?? LOCATIONS.in;
   const raw = await fetchOrganicResults(keyword, loc);
   if (raw.provider === "demo") throw new ProviderUnavailableError("search", "PROVIDER_NOT_CONFIGURED", "Bulk ranks need a real search provider.");
   const organic = raw.organic ?? [];
@@ -168,7 +168,7 @@ export async function fetchRank(
   location: Location,
   _brand: string = ""
 ): Promise<SerpResult> {
-  const loc = LOCATIONS[location];
+  const loc = LOCATIONS[location] ?? LOCATIONS.in;
 
   const cleanDomain = (domain ?? "")
     .toLowerCase()

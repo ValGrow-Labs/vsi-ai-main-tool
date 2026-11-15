@@ -13,7 +13,7 @@ export function auditPriority(c: CheckResult): number {
 }
 
 function technicalRows(c: CheckResult): { label: string; value: string }[] {
-  const rows = [{ label: "Check", value: CHECK_COPY[c.id].technical }];
+  const rows = [{ label: "Check", value: CHECK_COPY[c.id]?.technical || c.id }];
   if (c.total) rows.push({ label: "Checked", value: String(c.total) });
   for (const [k, v] of Object.entries(c.detail)) {
     if (v === null || v === undefined || (Array.isArray(v) && v.length === 0)) continue;
@@ -36,8 +36,8 @@ export function auditFinding(c: CheckResult, clientId: string): Finding {
       c.status === "pass" ? "Looks good" : c.status === "not_checked" ? "Not checked" : c.status === "fail" ? "Needs fixing" : "Could be improved",
     priority: auditPriority(c),
     whatWeFound: checkEvidence(c) || `${title}.`,
-    whyItMatters: copy.why,
-    whatToDo: c.status === "not_checked" ? "Nothing to fix from this check yet. Once the reason above is resolved, run the audit again." : copy.todo(c),
+    whyItMatters: copy?.why || "",
+    whatToDo: c.status === "not_checked" ? "Nothing to fix from this check yet. Once the reason above is resolved, run the audit again." : copy ? copy.todo(c) : "Review this check in the audit.",
     affected: c.affected.map((a) => (isUrl(a) ? { label: a.replace(/^https?:\/\//, ""), href: a, external: true } : { label: a })),
     technical: technicalRows(c),
     href: "/dashboard/check",

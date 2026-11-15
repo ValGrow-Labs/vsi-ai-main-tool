@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { X, Search, Check, Globe, MapPin } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { LOCATION_OPTIONS, type LocationOption } from "./location";
+import { LOCATION_OPTIONS, matchLocationOption, type LocationOption } from "./location";
 
 interface LocationModalProps {
   isOpen: boolean;
@@ -36,10 +36,21 @@ export function LocationModal({
   currentLocationCode,
   onSave,
 }: LocationModalProps) {
+  const initialMatched = matchLocationOption(currentLocationCode || currentLocation);
   const [selectedLang, setSelectedLang] = useState(currentLanguage || "English");
-  const [selectedLocCode, setSelectedLocCode] = useState(currentLocationCode || "");
-  const [selectedLocName, setSelectedLocName] = useState(currentLocation || "");
+  const [selectedLocCode, setSelectedLocCode] = useState(initialMatched?.code || currentLocationCode || "");
+  const [selectedLocName, setSelectedLocName] = useState(initialMatched?.country || currentLocation || "");
   const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedLang(currentLanguage || "English");
+      const matched = matchLocationOption(currentLocationCode || currentLocation);
+      setSelectedLocCode(matched?.code || currentLocationCode || "");
+      setSelectedLocName(matched?.country || currentLocation || "");
+      setSearchQuery("");
+    }
+  }, [isOpen, currentLanguage, currentLocation, currentLocationCode]);
 
   const filteredLocations = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
@@ -58,7 +69,10 @@ export function LocationModal({
   }
 
   function handleSave() {
-    onSave(selectedLang.trim() || "English", selectedLocName, selectedLocCode);
+    const matched = matchLocationOption(selectedLocCode || selectedLocName);
+    const finalCode = matched?.code || selectedLocCode;
+    const finalName = matched?.country || selectedLocName;
+    onSave(selectedLang.trim() || "English", finalName, finalCode);
     onClose();
   }
 

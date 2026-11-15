@@ -25,13 +25,12 @@ export function matchLocationOption(text: string | undefined | null): LocationOp
       l.country.toLowerCase() === target ||
       l.label.toLowerCase() === target ||
       l.code.toLowerCase() === target ||
-      (target.includes("emirates") && l.code === "ae") ||
-      (target.includes("dubai") && l.code === "ae") ||
-      (target.includes("singapore") && l.code === "sg") ||
-      (target.includes("india") && l.code === "in") ||
-      (target.includes("united states") && l.code === "us") ||
-      (target.includes("kingdom") && l.code === "uk") ||
-      (target.includes("lanka") && l.code === "lk")
+      ((target.includes("emirates") || target.includes("dubai") || target === "uae" || target === "u.a.e.") && l.code === "ae") ||
+      ((target.includes("singapore") || target === "sg" || target === "sgp") && l.code === "sg") ||
+      ((target.includes("india") || target === "in" || target === "ind" || target === "bharat") && l.code === "in") ||
+      ((target.includes("united states") || target === "us" || target === "usa" || target === "u.s." || target === "u.s.a.") && l.code === "us") ||
+      ((target.includes("kingdom") || target === "uk" || target === "u.k." || target.includes("britain") || target.includes("england")) && l.code === "uk") ||
+      ((target.includes("lanka") || target === "lk") && l.code === "lk")
   );
 }
 

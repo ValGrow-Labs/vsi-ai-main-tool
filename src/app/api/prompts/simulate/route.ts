@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAgencyApi } from "@/lib/auth";
 import { searchSerpApi, SerpApiError } from "@/lib/serpapi-service";
 import { logProviderError, PROVIDER_FAILURE_MESSAGES, reasonFromHttpStatus, safeProviderMessage } from "@/lib/provider-response";
+import { matchLocationOption } from "@/components/project-creation/location";
 
 export async function POST(req: NextRequest) {
   // Paid provider call: an active signed-in user with an organization only (401 / 403 otherwise).
@@ -39,16 +40,8 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      const glMap: Record<string, string> = {
-        "UAE": "ae",
-        "United Arab Emirates": "ae",
-        "India": "in",
-        "United States": "us",
-        "US": "us",
-        "United Kingdom": "uk",
-        "UK": "uk",
-      };
-      const gl = glMap[location] || "ae";
+      const glMatch = matchLocationOption(location);
+      const gl = glMatch?.code || (location === "ae" ? "ae" : "in");
 
       const serpResult = await searchSerpApi(keyword || "test search", {
         engine: "google",

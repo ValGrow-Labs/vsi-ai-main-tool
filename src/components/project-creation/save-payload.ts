@@ -1,5 +1,5 @@
 import type { Location } from "@/types/search";
-import { isSupportedLocationCode } from "./location";
+import { isSupportedLocationCode, matchLocationOption } from "./location";
 
 /** The subset of the wizard's state that is saved. */
 export interface WizardSaveInput {
@@ -40,7 +40,14 @@ export function buildProjectSavePayload(input: WizardSaveInput): BuildSaveResult
     return { ok: false, message: "Website URL is required. Please go back to Step 1 to enter your website." };
   }
 
-  const locationCode = input.business.locationCode.trim();
+  const locMatch =
+    matchLocationOption(input.business.locationCode) ||
+    matchLocationOption(input.business.location);
+  const locationCode = (locMatch?.code || input.business.locationCode.trim()) as Location;
+  const countryName = input.business.location.trim()
+    ? (locMatch?.country || input.business.location.trim())
+    : null;
+
   if (!isSupportedLocationCode(locationCode)) {
     return { ok: false, message: "Choose the search location for this project in Step 4 before starting." };
   }
@@ -72,7 +79,7 @@ export function buildProjectSavePayload(input: WizardSaveInput): BuildSaveResult
         website: domain,
         brand_name: brand,
         service_type: "seo_geo",
-        country: input.business.location.trim() || null,
+        country: countryName,
         industry: input.business.businessType.trim() || null,
         default_location: locationCode,
       },

@@ -6,6 +6,7 @@ import { formatShortDate } from "@/lib/format";
 import { isAuditProblem } from "@/lib/site-audit/checks";
 import OverviewView, { type OverviewData } from "@/features/visibility/components/OverviewView";
 import KeywordResearchView from "@/features/visibility/components/KeywordResearchView";
+import { LOCATIONS, type Location } from "@/types/search";
 
 export const metadata: Metadata = { title: "Overview" };
 export const dynamic = "force-dynamic";
@@ -13,13 +14,18 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams;
   const q = typeof params.q === "string" ? params.q.trim() : "";
+  const { active, error } = await requireProjectContext();
+
   if (q) {
-    const loc = typeof params.loc === "string" ? params.loc : "United Arab Emirates";
+    const defaultCountry =
+      active?.country ||
+      (active?.defaultLocation && LOCATIONS[active.defaultLocation as Location]?.label) ||
+      "India";
+    const loc = typeof params.loc === "string" ? params.loc : defaultCountry;
     return <KeywordResearchView key={`${q}|${loc}`} query={q} location={loc} />;
   }
 
   const setupNotices = typeof params.setup === "string" ? params.setup.split(",").filter(Boolean) : [];
-  const { active, error } = await requireProjectContext();
 
   const empty: OverviewData = {
     project: null,
@@ -45,7 +51,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const search = o.search.state === "ok" ? o.search.summary : null;
 
   const data: OverviewData = {
-    project: { id: active.id, name: active.name, domain: displayDomain(active.website) },
+    project: {
+      id: active.id,
+      name: active.name,
+      domain: displayDomain(active.website),
+      country: active.country,
+      defaultLocation: active.defaultLocation,
+    },
     loadError: null,
     website: {
       score: audit?.completed?.score ?? null,

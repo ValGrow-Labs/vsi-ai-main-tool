@@ -85,6 +85,7 @@ describe("/api/projects/[id]/keywords route handlers", () => {
       website: "valgrowlabs.com",
       brand_name: "Valgrowlabs",
       default_location: "ae",
+      country: "United Arab Emirates",
     };
     insertedRows = [];
     queryLog = [];
@@ -145,6 +146,22 @@ describe("/api/projects/[id]/keywords route handlers", () => {
     expect(insertedRows[0].domain).toBe("valgrowlabs.com");
     expect(insertedRows[0].location).toBe("ae");
     expect(insertedRows[1].keyword).toBe("professional e-commerce & online services experts dubai");
+  });
+
+  it("POST prioritizes project country India over legacy ae default_location", async () => {
+    if (projectRow) {
+      projectRow.country = "India";
+      projectRow.default_location = "ae";
+    }
+    const req = new NextRequest(`http://localhost/api/projects/${validId}/keywords`, {
+      method: "POST",
+      body: JSON.stringify({
+        searches: [{ keyword: "best phone in india" }],
+      }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: validId }) });
+    expect(res.status).toBe(201);
+    expect(insertedRows[0].location).toBe("in");
   });
 
   it("POST handles keyword limit database trigger gracefully", async () => {

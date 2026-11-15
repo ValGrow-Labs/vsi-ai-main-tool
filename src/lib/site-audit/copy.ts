@@ -214,7 +214,8 @@ export const CHECK_COPY: Record<CheckId, CheckCopy> = {
 
 export function checkHeadline(c: CheckResult): string {
   const copy = CHECK_COPY[c.id];
-  if (c.status === "not_checked") return `${copy.subject}: not checked`;
+  if (!copy) return c.id;
+  if (c.status === "not_checked") return `${copy.subject || c.id}: not checked`;
   return c.status === "pass" ? copy.healthy : copy.problem(c);
 }
 

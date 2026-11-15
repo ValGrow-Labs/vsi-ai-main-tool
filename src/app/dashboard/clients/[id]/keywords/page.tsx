@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireAgency } from "@/lib/auth";
 import { SERVICE_TYPE_LABELS, TRACK_TYPE_CONFIG, LOCATIONS } from "@/types/search";
 import type { ServiceType, TrackType, Location } from "@/types/search";
+import { matchLocationOption } from "@/components/project-creation/location";
 import { Plus, ArrowRight } from "lucide-react";
 import { ButtonLink } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -94,7 +95,11 @@ export default async function KeywordsPage({ params }: { params: Promise<{ id: s
                       <span className="text-ink-3 md:hidden">Checked in: </span>
                       {tt?.label ?? "AI answers"}
                     </span>
-                    <span className="text-support text-ink-2">{(LOCATIONS[kw.location as Location] ?? LOCATIONS.ae).label}</span>
+                    <span className="text-support text-ink-2">
+                      {(kw.location && LOCATIONS[kw.location as Location]?.label) ||
+                        matchLocationOption(kw.location)?.label ||
+                        LOCATIONS.in.label}
+                    </span>
                     <StatusLabel tone={kw.is_active ? "positive" : "neutral"}>{kw.is_active ? "Active" : "Paused"}</StatusLabel>
                     <ArrowRight size={15} strokeWidth={1.75} className="hidden text-line-strong transition-colors group-hover:text-ink-2 md:block" aria-hidden />
                   </Link>

@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireAgencyApi, type SessionContext } from "@/lib/auth";
 import { displayDomain, UUID_PATTERN } from "@/lib/project-types";
 import { LOCATIONS, type Location, type TrackType } from "@/types/search";
+import { matchLocationOption } from "@/components/project-creation/location";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,7 @@ async function findProject(session: SessionContext & { agencyId: string }, proje
   const supabase = await createClient();
   let q = supabase
     .from("clients")
-    .select("id, agency_id, name, website, brand_name, default_location")
+    .select("id, agency_id, name, website, brand_name, default_location, country")
     .eq("id", projectId);
   if (session.role !== "super_admin") {
     q = q.eq("agency_id", session.agencyId);
@@ -30,6 +31,7 @@ async function findProject(session: SessionContext & { agencyId: string }, proje
       website: string | null;
       brand_name: string | null;
       default_location: string | null;
+      country: string | null;
     } | null,
   };
 }
@@ -95,10 +97,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
   const domain = displayDomain(project.website) || project.website || "";
   const brand = ((project.brand_name as string | null) || (project.name as string) || domain).trim();
+  const locMatch =
+    (project.country ? matchLocationOption(project.country) : null) ||
+    (project.default_location ? matchLocationOption(project.default_location) : null);
   const defaultLoc: Location =
-    project.default_location && project.default_location in LOCATIONS
+    (locMatch?.code && locMatch.code in LOCATIONS ? (locMatch.code as Location) : null) ||
+    (project.default_location && project.default_location in LOCATIONS
       ? (project.default_location as Location)
-      : "ae";
+      : "in");
 
   type ValidatedSearch = {
     keyword: string;
@@ -127,6 +133,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       }
       if (typeof obj.location === "string" && obj.location in LOCATIONS) {
         loc = obj.location as Location;
+      } else if (typeof obj.location === "string" && obj.location.trim()) {
+        const itemMatch = matchLocationOption(obj.location.trim());
+        if (itemMatch?.code && itemMatch.code in LOCATIONS) {
+          loc = itemMatch.code as Location;
+        }
       }
     }
 

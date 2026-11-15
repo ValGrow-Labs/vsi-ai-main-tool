@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { runKeywordsForClient, type TrackedKeyword } from "@/lib/run-pipeline";
+import { LOCATIONS, type Location } from "@/types/search";
+import { matchLocationOption } from "@/components/project-creation/location";
 
 export const maxDuration = 300; // 5 min — accommodates a full batch
 export const dynamic = "force-dynamic";
@@ -23,6 +25,8 @@ interface DueClient {
  name: string;
  check_frequency: string | null;
  last_auto_run_at: string | null;
+ default_location?: string | null;
+ country?: string | null;
  ai_mode_enabled: boolean | null;
  ai_overview_enabled: boolean | null;
  rank_tracking_enabled: boolean | null;
@@ -69,7 +73,7 @@ export async function POST(req: NextRequest) {
  // Pull every client with a non-manual frequency
  const { data: clients } = await supabase
  .from("clients")
- .select("id, agency_id, name, check_frequency, last_auto_run_at, ai_mode_enabled, ai_overview_enabled, rank_tracking_enabled, chatgpt_enabled")
+ .select("id, agency_id, name, check_frequency, last_auto_run_at, default_location, country, ai_mode_enabled, ai_overview_enabled, rank_tracking_enabled, chatgpt_enabled")
  .neq("check_frequency", "manual")
  .order("last_auto_run_at", { ascending: true, nullsFirst: true });
 
@@ -87,7 +91,21 @@ export async function POST(req: NextRequest) {
  .eq("client_id", client.id)
  .eq("is_active", true);
 
- const keywords = (kws ?? []) as TrackedKeyword[];
+ const clientLocationMatch =
+   (client.country ? matchLocationOption(client.country as string) : null) ||
+   (client.default_location ? matchLocationOption(client.default_location as string) : null);
+ const fallbackLocation: Location =
+   (clientLocationMatch?.code && clientLocationMatch.code in LOCATIONS
+     ? (clientLocationMatch.code as Location)
+     : null) ||
+   (client.default_location && (client.default_location as string) in LOCATIONS
+     ? (client.default_location as Location)
+     : "in");
+
+ const keywords = ((kws ?? []) as TrackedKeyword[]).map((k) => ({
+   ...k,
+   location: (k.location && (k.location as string) in LOCATIONS ? k.location : fallbackLocation) as Location,
+ }));
  if (keywords.length === 0) {
  // Nothing to do — still bump last_auto_run_at so we don't re-check immediately
  await supabase.from("clients").update({ last_auto_run_at: new Date().toISOString() }).eq("id", client.id);

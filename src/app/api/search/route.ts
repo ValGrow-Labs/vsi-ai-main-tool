@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAgencyApi } from "@/lib/auth";
 import { searchSerpApi, SerpApiError } from "@/lib/serpapi-service";
 import { logProviderError, PROVIDER_FAILURE_MESSAGES, reasonFromHttpStatus } from "@/lib/provider-response";
+import { matchLocationOption } from "@/components/project-creation/location";
 
 export async function POST(req: NextRequest) {
   // Paid provider call: an active signed-in user with an organization only (401 / 403 otherwise).
@@ -48,7 +49,8 @@ export async function POST(req: NextRequest) {
       "sg": "sg",
     };
 
-    const gl = glMap[location || ""] || "ae";
+    const locMatch = matchLocationOption(location || "");
+    const gl = locMatch?.code || glMap[location || ""] || "in";
 
     const response = await searchSerpApi(keyword.trim(), {
       engine: "google",
@@ -62,7 +64,7 @@ export async function POST(req: NextRequest) {
       query: response.query,
       domain: domain ?? null,
       brandName: brandName ?? null,
-      location: location ?? "UAE",
+      location: locMatch?.country || location || "India",
       total_results: response.total_results,
       results: response.results,
       isDemo: response.isDemo === true,

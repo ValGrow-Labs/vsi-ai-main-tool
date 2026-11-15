@@ -51,7 +51,7 @@ vi.mock("@/lib/auth", () => ({
 const AGENCY = "agency-a";
 const OTHER = "agency-b";
 const session = (over: Record<string, unknown> = {}) => ({ userId: "u1", role: "pilot", agencyId: AGENCY, ...over });
-const row = (id: string, agency: string, name = id) => ({ id, name, website: `https://${id}.example`, brand_name: null, service_type: "seo_geo", default_location: "ae", agency_id: agency, agencies: { name: `Org ${agency}`, display_name: null } });
+const row = (id: string, agency: string, name = id) => ({ id, name, website: `https://${id}.example`, brand_name: null, service_type: "seo_geo", default_location: "ae", country: null, agency_id: agency, agencies: { name: `Org ${agency}`, display_name: null } });
 
 async function fresh() {
   ((globalThis as { __stores?: Map<string, Promise<unknown>>[] }).__stores ?? []).forEach((s) => s.clear());
@@ -131,5 +131,13 @@ describe("project context", () => {
     const { getProjectContext } = await fresh();
     await getProjectContext(session() as never);
     expect(state.queries.some((q) => q.startsWith("clients.eq("))).toBe(false);
+  });
+
+  it("prioritizes country India over legacy default_location ae", async () => {
+    state.rows = [{ ...row("p1", AGENCY), default_location: "ae", country: "India" }];
+    const { getProjectContext } = await fresh();
+    const ctx = await getProjectContext(session() as never);
+    expect(ctx.projects[0].defaultLocation).toBe("in");
+    expect(ctx.projects[0].country).toBe("India");
   });
 });

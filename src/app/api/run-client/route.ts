@@ -3,6 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { requireAgencyApi } from "@/lib/auth";
 import { UUID_PATTERN } from "@/lib/project-types";
 import { runKeywordsForClient, type RunResult, type TrackedKeyword } from "@/lib/run-pipeline";
+import { LOCATIONS, type Location } from "@/types/search";
+import { matchLocationOption } from "@/components/project-creation/location";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -34,7 +36,7 @@ export async function POST(req: NextRequest) {
  // stay scoped to their own.
  let clientQuery = supabase
  .from("clients")
- .select("id, agency_id, ai_mode_enabled, ai_overview_enabled, rank_tracking_enabled, chatgpt_enabled")
+ .select("id, agency_id, default_location, country, ai_mode_enabled, ai_overview_enabled, rank_tracking_enabled, chatgpt_enabled")
  .eq("id", client_id);
  if (!isSuperAdmin) {
  clientQuery = clientQuery.eq("agency_id", session.agencyId);
@@ -54,7 +56,21 @@ export async function POST(req: NextRequest) {
  if (keyword_ids?.length) query = query.in("id", keyword_ids);
 
  const { data: keywords } = await query;
- const kws = (keywords ?? []) as TrackedKeyword[];
+ const clientLocationMatch =
+   (client.country ? matchLocationOption(client.country as string) : null) ||
+   (client.default_location ? matchLocationOption(client.default_location as string) : null);
+ const fallbackLocation: Location =
+   (clientLocationMatch?.code && clientLocationMatch.code in LOCATIONS
+     ? (clientLocationMatch.code as Location)
+     : null) ||
+   (client.default_location && (client.default_location as string) in LOCATIONS
+     ? (client.default_location as Location)
+     : "in");
+
+ const kws = (keywords ?? []).map((k) => ({
+   ...k,
+   location: (k.location && (k.location as string) in LOCATIONS ? k.location : fallbackLocation) as Location,
+ })) as TrackedKeyword[];
 
  const result: RunResult = await runKeywordsForClient({
  agencyId: client.agency_id as string,

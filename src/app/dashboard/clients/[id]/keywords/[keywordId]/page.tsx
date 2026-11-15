@@ -14,6 +14,7 @@ import type { TaskRow } from "@/lib/tasks";
 import CitationStrategyPanel, { type CitationStrategy } from "@/components/CitationStrategyPanel";
 import { isBriefStale, type BriefSnapshot } from "@/lib/brief-staleness";
 import StatusDot from "@/components/ui/StatusDot";
+import { matchLocationOption } from "@/components/project-creation/location";
 
 export default async function KeywordDetailPage({
  params,
@@ -172,7 +173,9 @@ export default async function KeywordDetailPage({
  {tt?.label}
  </span>
  <span className="rounded bg-surface-2 border border-line px-2 py-0.5 text-caption text-ink-2 font-medium">
- {(LOCATIONS[keyword.location as Location] ?? LOCATIONS.ae).label}
+ {(keyword.location && LOCATIONS[keyword.location as Location]?.label) ||
+   matchLocationOption(keyword.location)?.label ||
+   LOCATIONS.in.label}
  </span>
  <span className={`flex items-center gap-1.5 text-caption ${keyword.is_active ? "text-positive" : "text-ink-3"}`}>
  <span className={`h-1.5 w-1.5 rounded-full ${keyword.is_active ? "bg-positive " : "bg-ink-3"}`} />

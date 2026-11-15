@@ -228,7 +228,7 @@ export async function fetchAIO(
     throw new ProviderUnavailableError("serpapi", "PROVIDER_NOT_CONFIGURED", "Google AI answers need SERPAPI_KEY.");
   }
 
-  const loc = LOCATIONS[location];
+  const loc = LOCATIONS[location] ?? LOCATIONS.in;
 
   const aio = await fetchAIORaw(keyword, loc, key);
 

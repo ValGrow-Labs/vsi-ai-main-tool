@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import type { Location, RunCheckResult } from "@/types/search";
 import { LOCATIONS } from "@/types/search";
@@ -9,6 +9,8 @@ import GapMetrics from "@/components/GapMetrics";
 import type { CitationContent } from "@/app/api/citation-content/route";
 import { normaliseDomain } from "@/lib/url-input";
 import { useActiveProject } from "@/components/layout/ProjectProvider";
+import type { ProjectSummary } from "@/lib/project-types";
+import { matchLocationOption } from "@/components/project-creation/location";
 import { Search, Link2, Building2, MapPin, CheckCircle2, AlertCircle, XCircle, Loader2, ArrowRight, ChevronDown, TrendingUp, MessageSquareText } from "lucide-react";
 
 type CitationMap = Record<string, CitationContent | "loading" | "error">;
@@ -30,9 +32,22 @@ const GAP_STYLES: Record<string, { border: string; bg: string; badge: string; do
 
 const getGapStyle = (label: string) => GAP_STYLES[label] ?? GAP_STYLES.weak_double_loss;
 
-export default function LiveSearchCheckView() {
+export default function LiveSearchCheckView({ defaultProject }: { defaultProject?: ProjectSummary | null } = {}) {
   const searchParams = useSearchParams();
-  const project = useActiveProject();
+  const contextProject = useActiveProject();
+  const project = defaultProject || contextProject;
+
+  const resolveInitialLocation = (): Location => {
+    const locParam = searchParams.get("loc");
+    if (locParam && locParam in LOCATIONS) return locParam as Location;
+    if (project?.country) {
+      const match = matchLocationOption(project.country);
+      if (match?.code && match.code in LOCATIONS) return match.code as Location;
+    }
+    if (project?.defaultLocation && project.defaultLocation in LOCATIONS) return project.defaultLocation as Location;
+    return "in";
+  };
+
   const initialKw = searchParams.get("kw") || searchParams.get("q") || "";
   // Start from the active project so users don't retype what VSI already knows.
   const initialDomain = searchParams.get("domain") || (project?.website ?? "").replace(/^https?:\/\//, "").replace(/\/$/, "");
@@ -40,11 +55,29 @@ export default function LiveSearchCheckView() {
   const [keyword, setKeyword] = useState(initialKw);
   const [domain, setDomain] = useState(initialDomain);
   const [brand, setBrand] = useState(project?.brandName || project?.name || "");
-  const [location, setLocation] = useState<Location>("ae");
+  const [location, setLocation] = useState<Location>(resolveInitialLocation);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<RunCheckResult | null>(null);
   const [citationMap, setCitationMap] = useState<CitationMap>({});
+
+  useEffect(() => {
+    if (project) {
+      const resolved =
+        (project.country ? (matchLocationOption(project.country)?.code as Location) : null) ||
+        (project.defaultLocation && project.defaultLocation in LOCATIONS ? (project.defaultLocation as Location) : null) ||
+        "in";
+      if (!searchParams.get("loc")) {
+        setLocation(resolved);
+      }
+      if (project.website) {
+        setDomain(project.website.replace(/^https?:\/\//, "").replace(/\/$/, ""));
+      }
+      if (project.brandName || project.name) {
+        setBrand(project.brandName || project.name);
+      }
+    }
+  }, [project?.id, project?.country, project?.defaultLocation, project?.website, project?.brandName, project?.name, searchParams]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -95,6 +128,21 @@ export default function LiveSearchCheckView() {
   const gap = result?.status ?? null;
   const gapStyle = gap ? getGapStyle(gap.label) : null;
 
+  const searchPlaceholder =
+    location === "in"
+      ? "e.g. best smartphone brand in India"
+      : location === "ae"
+      ? "e.g. best SEO agency Dubai"
+      : location === "us"
+      ? "e.g. best running shoes"
+      : location === "uk"
+      ? "e.g. best coffee roasters London"
+      : location === "sg"
+      ? "e.g. top fintech startups Singapore"
+      : location === "lk"
+      ? "e.g. best tea brands Sri Lanka"
+      : "e.g. best SEO agency";
+
   return (
     <div className="space-y-8 pb-16">
 
@@ -117,7 +165,7 @@ export default function LiveSearchCheckView() {
                   type="text"
                   value={keyword}
                   onChange={(e) => setKeyword(e.target.value)}
-                  placeholder="e.g. best SEO agency dubai"
+                  placeholder={searchPlaceholder}
                   required
                   className="flex-1 bg-transparent text-body font-medium text-ink placeholder:text-ink-3/50 focus:outline-none min-w-0"
                 />

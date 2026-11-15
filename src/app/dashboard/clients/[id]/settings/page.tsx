@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireAgency } from "@/lib/auth";
 import ClientSettingsForm from "@/components/ClientSettingsForm";
 import ClientIdentityForm from "@/components/ClientIdentityForm";
+import { DeleteProjectButton } from "@/features/clients";
 import { ArrowLeft, Settings } from "lucide-react";
 
 export default async function ClientSettingsPage({
@@ -67,6 +68,26 @@ export default async function ClientSettingsPage({
  location_override: client.location_override ?? "",
  }}
  />
+
+ <div className="rounded-panel border border-critical/30 bg-critical-soft/30 p-5 space-y-3">
+ <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+ <div>
+ <h2 className="text-body font-semibold text-critical">Danger Zone</h2>
+ <p className="text-support text-ink-3">
+ Permanently delete this project and all its tracked searches, rankings, audits, and tasks.
+ </p>
+ </div>
+ <DeleteProjectButton
+ project={{
+ id,
+ name: (client as { name: string }).name,
+ website: (client as { website: string | null }).website,
+ }}
+ buttonStyle="danger"
+ redirectOnDelete="/dashboard/clients"
+ />
+ </div>
+ </div>
  </div>
  </div>
  );

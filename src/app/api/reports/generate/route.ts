@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
  // Fetch client. Super admin can act on any agency's client.
  let clientQuery = supabase
  .from("clients")
- .select("id, name, brand_name, website, service_type, default_location, agency_id")
+ .select("id, name, brand_name, website, service_type, default_location, country, agency_id")
  .eq("id", client_id);
  if (!isSuperAdmin) clientQuery = clientQuery.eq("agency_id", session.agencyId);
  const { data: client } = await clientQuery.single();
@@ -97,6 +97,7 @@ export async function POST(req: NextRequest) {
  brandName: (client.brand_name as string | null) ?? null,
  serviceType: (client.service_type as string | null) ?? null,
  defaultLocation: (client.default_location as string | null) ?? null,
+ country: (client.country as string | null) ?? null,
  agencyId: owningAgencyId,
  agencyName: null,
  },

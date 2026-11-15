@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { isDummySupabase, requireAgency, type SessionContext } from "@/lib/auth";
 import { PROJECT_COOKIE, type ProjectSummary } from "@/lib/project-types";
+import { matchLocationOption } from "@/components/project-creation/location";
 
 export { PROJECT_COOKIE };
 export type { ProjectSummary };
@@ -22,6 +23,7 @@ type ClientRow = {
   brand_name: string | null;
   service_type: string | null;
   default_location: string | null;
+  country?: string | null;
   agency_id: string;
   agencies?: { name?: string | null; display_name?: string | null } | { name?: string | null; display_name?: string | null }[] | null;
 };
@@ -41,7 +43,7 @@ const loadVisibleClients = cache(async () => {
 
   const main = await supabase
     .from("clients")
-    .select("id, name, website, brand_name, service_type, default_location, agency_id, agencies(name, display_name)")
+    .select("id, name, website, brand_name, service_type, default_location, country, agency_id, agencies(name, display_name)")
     .order("created_at", { ascending: true });
   data = main.data;
   error = main.error;
@@ -49,13 +51,13 @@ const loadVisibleClients = cache(async () => {
   if (error && (error.code === "42703" || /display_name|column/i.test(error.message ?? ""))) {
     const fallback = await supabase
       .from("clients")
-      .select("id, name, website, brand_name, service_type, default_location, agency_id, agencies(name)")
+      .select("id, name, website, brand_name, service_type, default_location, country, agency_id, agencies(name)")
       .order("created_at", { ascending: true });
 
     if (fallback.error && (fallback.error.code === "42703" || /column/i.test(fallback.error.message ?? ""))) {
       const basic = await supabase
         .from("clients")
-        .select("id, name, website, brand_name, service_type, default_location, agency_id")
+        .select("id, name, website, brand_name, service_type, default_location, country, agency_id")
         .order("created_at", { ascending: true });
       data = basic.data;
       error = basic.error;
@@ -91,13 +93,17 @@ const loadProjects = cache(async (userId: string, agencyId: string | null, isSup
   const visible = isSuperAdmin || !agencyId ? rows : rows.filter((c) => c.agency_id === agencyId);
   const projects = visible.map((c) => {
     const agency = Array.isArray(c.agencies) ? c.agencies[0] : c.agencies;
+    const locMatch =
+      (c.country ? matchLocationOption(c.country) : null) ||
+      (c.default_location ? matchLocationOption(c.default_location) : null);
     return {
       id: c.id,
       name: c.name,
       website: c.website,
       brandName: c.brand_name,
       serviceType: c.service_type,
-      defaultLocation: c.default_location,
+      defaultLocation: locMatch?.code || c.default_location || null,
+      country: locMatch?.country || c.country || null,
       agencyId: c.agency_id,
       agencyName: isSuperAdmin ? agency?.display_name ?? agency?.name ?? null : null,
     } satisfies ProjectSummary;

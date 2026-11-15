@@ -42,7 +42,7 @@ async function timed<T>(label: string, value: T): Promise<T> {
   state.log.push({ label, start, end: performance.now() - state.t0 });
   return value;
 }
-const clientRows = [1, 2].map((n) => ({ id: n === 1 ? PROJECT : "cccccccc-0000-4000-8000-000000000002", name: "P" + n, website: "https://p" + n + ".example", brand_name: "B", service_type: "seo_geo", default_location: "ae", agency_id: AGENCY, agencies: { name: "Org", display_name: null } }));
+const clientRows = [1, 2].map((n) => ({ id: n === 1 ? PROJECT : "cccccccc-0000-4000-8000-000000000002", name: "P" + n, website: "https://p" + n + ".example", brand_name: "B", service_type: "seo_geo", default_location: "ae", country: "United Arab Emirates", agency_id: AGENCY, agencies: { name: "Org", display_name: null } }));
 function dataFor(table: string, head: boolean, single: boolean) {
   if (head) return { data: null, count: table === "tasks" ? state.tasks : 3, error: null };
   const rows: Record<string, unknown[]> = {

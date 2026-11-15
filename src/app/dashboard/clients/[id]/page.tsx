@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireAgency } from "@/lib/auth";
 import { SERVICE_TYPE_LABELS, LOCATIONS } from "@/types/search";
 import type { ServiceType, Location } from "@/types/search";
+import { matchLocationOption } from "@/components/project-creation/location";
 import RunButton from "@/components/RunButton";
 import OpportunityPanel from "@/components/OpportunityPanel";
 import { Globe, MapPin, Briefcase, Calendar, Plus, ExternalLink, ArrowRight, Activity, ShieldCheck, CheckCircle2, Lightbulb } from "lucide-react";
@@ -305,10 +306,17 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {[
             { label: "Brand Anchor Name", value: client.brand_name },
-            { label: "Target Location", value: (LOCATIONS[client.default_location as Location] ?? LOCATIONS.ae).label },
+            {
+              label: "Target Location",
+              value:
+                (client.country ? matchLocationOption(client.country)?.label : null) ||
+                (client.default_location && LOCATIONS[client.default_location as Location]?.label) ||
+                client.country ||
+                LOCATIONS.in.label,
+            },
             { label: "Service Package", value: svc.label },
             { label: "Industry Category", value: client.industry },
-            { label: "Operating Country", value: client.country },
+            { label: "Operating Country", value: client.country || (client.default_location && LOCATIONS[client.default_location as Location]?.label) || "India" },
             { label: "Onboarding Date", value: new Date(client.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) },
           ].filter((r) => r.value).map((row) => (
             <div key={row.label} className="bg-surface-2 border border-line p-4 rounded-panel">

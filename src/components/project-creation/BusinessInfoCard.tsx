@@ -9,7 +9,8 @@ interface BusinessInfoCardProps {
   icon?: ReactNode;
   value: string;
   subValue?: string;
-  onSave?: (newValue: string, newSubValue?: string) => void;
+  locationCode?: string;
+  onSave?: (newValue: string, newSubValue?: string, newCode?: string) => void;
   editable?: boolean;
   type?: "text" | "select-location";
   isAiGenerated?: boolean;
@@ -20,6 +21,7 @@ export function BusinessInfoCard({
   icon,
   value,
   subValue,
+  locationCode,
   onSave,
   editable = true,
   type = "text",
@@ -144,10 +146,10 @@ export function BusinessInfoCard({
           onClose={() => setIsModalOpen(false)}
           currentLanguage={value}
           currentLocation={subValue || ""}
-          currentLocationCode=""
+          currentLocationCode={locationCode || ""}
           onSave={(lang, loc, code) => {
             if (onSave) {
-              onSave(lang, loc);
+              onSave(lang, loc, code);
             }
           }}
         />

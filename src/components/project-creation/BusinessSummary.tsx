@@ -23,6 +23,7 @@ import { BusinessInfoCard } from "./BusinessInfoCard";
 import { SuggestedTopics } from "./SuggestedTopics";
 import { SitemapInput } from "./SitemapInput";
 import { TargetCustomers } from "./TargetCustomers";
+import { matchLocationOption } from "./location";
 
 export interface BusinessData {
   brandName: string;
@@ -86,6 +87,13 @@ export function BusinessSummary({
 
   function updateFields(patch: Partial<BusinessData>) {
     const next = { ...data, ...patch };
+    if (patch.location || patch.locationCode) {
+      const matched = matchLocationOption(patch.locationCode || patch.location || next.locationCode || next.location);
+      if (matched) {
+        next.location = matched.country;
+        next.locationCode = matched.code;
+      }
+    }
     onUpdate(next);
   }
 
@@ -226,11 +234,14 @@ export function BusinessSummary({
             icon={<MapPin className="h-4 w-4" />}
             value={data.language}
             subValue={data.location}
+            locationCode={data.locationCode}
             type="select-location"
-            onSave={(newLang, newLoc) => {
+            onSave={(newLang, newLoc, newCode) => {
+              const matched = matchLocationOption(newCode || newLoc);
               updateFields({
                 language: newLang || data.language,
-                location: newLoc || data.location,
+                location: matched ? matched.country : (newLoc || data.location),
+                locationCode: matched ? matched.code : (newCode || data.locationCode),
               });
             }}
           />

@@ -3,6 +3,7 @@ import { requireAgencyApi } from "@/lib/auth";
 import { normaliseDomain } from "@/lib/url-input";
 import { scrapeWebsiteMetadata, generateAIKeywordsAndQueries } from "@/lib/ai-keyword-generator";
 import { LOCATIONS, type Location } from "@/types/search";
+import { matchLocationOption } from "@/components/project-creation/location";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +28,10 @@ export async function POST(req: NextRequest) {
   if (!parsed) return NextResponse.json({ success: false, error: "Enter a valid website." }, { status: 400 });
   const brand = typeof body.brandName === "string" && body.brandName.trim() ? body.brandName.trim().slice(0, 120) : parsed.domain;
   const industry = typeof body.industry === "string" && body.industry.trim() ? body.industry.trim().slice(0, 80) : "Digital Services";
-  const location: Location = typeof body.location === "string" && body.location in LOCATIONS ? (body.location as Location) : "ae";
+  const locMatch = typeof body.location === "string" ? matchLocationOption(body.location) : null;
+  const location: Location =
+    (locMatch?.code && locMatch.code in LOCATIONS ? (locMatch.code as Location) : null) ||
+    (typeof body.location === "string" && body.location in LOCATIONS ? (body.location as Location) : "in");
 
   try {
     const metadata = await scrapeWebsiteMetadata(parsed.domain);

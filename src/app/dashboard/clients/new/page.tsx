@@ -20,6 +20,7 @@ import { AnalysisSetup, type KeywordSetupItem } from "@/components/project-creat
 import { StepFooter } from "@/components/project-creation/StepFooter";
 import { AnalysisStartModal } from "@/components/project-creation/AnalysisStartModal";
 import { buildProjectSavePayload } from "@/components/project-creation/save-payload";
+import { matchLocationOption } from "@/components/project-creation/location";
 import type {
   AnalysisSuccessResponse,
   AnalysisUnavailableResponse,
@@ -119,6 +120,7 @@ export default function NewProjectPage() {
   }
 
   function mapExtractedToBusinessData(extracted: ExtractedWebsiteData): BusinessData {
+    const locMatch = matchLocationOption(extracted.locationCode || extracted.location);
     return {
       brandName: extracted.brandName ?? "",
       domain: extracted.domain,
@@ -126,8 +128,8 @@ export default function NewProjectPage() {
       websiteTitle: extracted.websiteTitle ?? "",
       metaDescription: extracted.metaDescription ?? "",
       language: extracted.language ?? "English",
-      location: extracted.location ?? "",
-      locationCode: extracted.locationCode ?? "",
+      location: locMatch?.country || extracted.location || "",
+      locationCode: locMatch?.code || extracted.locationCode || "",
       suggestedTopics: extracted.suggestedTopics || [],
       sitemapUrl: extracted.sitemapUrl ?? "",
       competitiveAdvantage: extracted.competitiveAdvantage ?? "",
@@ -275,13 +277,14 @@ export default function NewProjectPage() {
 
   function handleUnavailableFallback(event: { derived?: { brandName?: string | null; domain?: string; location?: string | null; locationCode?: string | null }; message?: string }) {
     const d = event.derived || { domain: currentUrlRef.current, brandName: "" };
+    const locMatch = matchLocationOption(d.locationCode || d.location);
     applyAnalysis(
       {
         ...EMPTY_BUSINESS,
         brandName: d.brandName ?? "",
         domain: d.domain || currentUrlRef.current,
-        location: d.location ?? "",
-        locationCode: d.locationCode ?? "",
+        location: locMatch?.country || (d.location ?? ""),
+        locationCode: locMatch?.code || (d.locationCode ?? ""),
       },
       [],
       [],
@@ -562,7 +565,25 @@ export default function NewProjectPage() {
             data={businessData}
             analyzed={analyzed}
             fallbackReason={analysisUnavailable}
-            onUpdate={(updated) => setBusinessData((prev) => ({ ...prev, ...updated }))}
+            onUpdate={(updated) => {
+              setBusinessData((prev) => {
+                const next = { ...prev, ...updated };
+                const locMatch = matchLocationOption(next.locationCode || next.location);
+                if (locMatch) {
+                  next.location = locMatch.country;
+                  next.locationCode = locMatch.code;
+                }
+                return next;
+              });
+              if (updated.location) {
+                setCompetitors((prevComps) =>
+                  prevComps.map((c) => ({
+                    ...c,
+                    market: detectMarketFromDomain(c.domain, updated.location),
+                  }))
+                );
+              }
+            }}
             onRetryAnalysis={() => {
               setStep(1);
               handleAnalyzeWebsite(businessData.domain || currentUrlRef.current);
@@ -594,9 +615,22 @@ export default function NewProjectPage() {
             sitemapUrl={businessData.sitemapUrl}
             geoTopics={geoTopics}
             onKeywordsChange={(newKw) => setKeywords(newKw)}
-            onLocationChange={(code, name) =>
-              setBusinessData((prev) => ({ ...prev, locationCode: code, location: name }))
-            }
+            onLocationChange={(code, name) => {
+              const locMatch = matchLocationOption(code || name);
+              const finalCode = (locMatch?.code || code) as Location;
+              const finalName = locMatch?.country || name;
+              setBusinessData((prev) => ({
+                ...prev,
+                locationCode: finalCode,
+                location: finalName,
+              }));
+              setCompetitors((prevComps) =>
+                prevComps.map((c) => ({
+                  ...c,
+                  market: detectMarketFromDomain(c.domain, finalName),
+                }))
+              );
+            }}
             onLanguageChange={(lang) =>
               setBusinessData((prev) => ({ ...prev, language: lang }))
             }

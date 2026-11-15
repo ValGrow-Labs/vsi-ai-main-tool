@@ -155,7 +155,7 @@ export async function buildChatContext(opts: {
   if (scope.kind === "client") {
     const { data: client } = await supabase
       .from("clients")
-      .select("id, name, brand_name, website, industry, country, service_type")
+      .select("id, name, brand_name, website, industry, country, service_type, default_location")
       .eq("id", scope.clientId)
       .eq("agency_id", agencyId)
       .maybeSingle();
@@ -200,7 +200,8 @@ export async function buildChatContext(opts: {
         website: (client.website as string | null) ?? null,
         brandName: (client.brand_name as string | null) ?? null,
         serviceType: (client.service_type as string | null) ?? null,
-        defaultLocation: null,
+        defaultLocation: (client.default_location as string | null) ?? null,
+        country: (client.country as string | null) ?? null,
         agencyId,
         agencyName: null,
       }),

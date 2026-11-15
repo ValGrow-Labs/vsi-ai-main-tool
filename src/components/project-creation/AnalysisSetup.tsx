@@ -1,10 +1,11 @@
 "use client";
 
 import { AI_ENGINES, GOOGLE_AI_OVERVIEW } from "@/lib/ai-engines";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Search, MapPin, Languages, Check, Plus, Trash2, Sparkles, Target } from "lucide-react";
 import { motion } from "framer-motion";
 import { LOCATIONS, type Location } from "@/types/search";
+import { matchLocationOption, LOCATION_OPTIONS } from "./location";
 
 export interface KeywordSetupItem {
   keyword: string;
@@ -48,6 +49,15 @@ export function AnalysisSetup({
 }: AnalysisSetupProps) {
   const [kwList, setKwList] = useState<KeywordSetupItem[]>(keywords);
   const [newKwInput, setNewKwInput] = useState("");
+
+  const activeLocMatch = matchLocationOption(location) || matchLocationOption(locationCode);
+  const activeCode = (activeLocMatch?.code as Location) || (locationCode as Location) || "";
+
+  useEffect(() => {
+    if (activeLocMatch && (locationCode !== activeLocMatch.code || location !== activeLocMatch.country)) {
+      onLocationChange(activeLocMatch.code as Location, activeLocMatch.country);
+    }
+  }, [location, locationCode, activeLocMatch, onLocationChange]);
 
   function notifyKw(next: KeywordSetupItem[]) {
     setKwList(next);
@@ -236,15 +246,16 @@ export function AnalysisSetup({
               </label>
               <select
                 id="search-loc"
-                value={locationCode}
+                value={activeCode}
                 onChange={(e) => {
                   const code = e.target.value as Location;
-                  const locObj = LOCATIONS[code];
-                  onLocationChange(code, locObj?.label.split("(")[0].trim() || location);
+                  const locOption = LOCATION_OPTIONS.find((l) => l.code === code);
+                  const locName = locOption?.country || LOCATIONS[code]?.label.split("(")[0].trim() || location;
+                  onLocationChange(code, locName);
                 }}
                 className="h-10 w-full rounded-control border border-line-strong bg-surface px-3 text-body text-ink focus:border-brand focus:outline-none"
               >
-                {!locationCode && (
+                {!activeCode && (
                   <option value="" disabled>
                     Select a location
                   </option>

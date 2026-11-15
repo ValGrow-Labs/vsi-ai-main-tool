@@ -71,6 +71,7 @@ const PROJECT = {
   brandName: "Acme",
   serviceType: null,
   defaultLocation: null,
+  country: null,
   agencyId: "a1",
   agencyName: null,
 };

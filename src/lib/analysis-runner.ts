@@ -6,6 +6,7 @@ import { runKeywordsForClient, type TrackedKeyword } from "@/lib/run-pipeline";
 import { isProviderUnavailable, serpApiKey, serperKey } from "@/lib/provider-status";
 import { logProviderError, safeProviderMessage } from "@/lib/provider-response";
 import type { Location, TrackType } from "@/types/search";
+import { matchLocationOption } from "@/components/project-creation/location";
 
 export type StageName =
   | "website_analysis"
@@ -239,8 +240,10 @@ export async function runFullAnalysisPipeline(
 
     const domain = client.website.replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
     const brandName = client.brand_name || client.name || domain;
-    // No invented market: without a project location the checks can't run.
-    const locationCode = (client.default_location || null) as Location | null;
+    const locMatch =
+      (client.country ? matchLocationOption(client.country) : null) ||
+      (client.default_location ? matchLocationOption(client.default_location) : null);
+    const locationCode = (locMatch?.code || client.default_location || null) as Location | null;
 
     // Fetch tracked keywords for SEO setup & checks
     let keywords: Array<{ id: string; keyword: string; domain?: string | null; brand?: string | null; location?: string | null; track_type?: string | null }> = [];

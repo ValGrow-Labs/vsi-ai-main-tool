@@ -56,12 +56,21 @@ export function CompetitorSelection({
   useEffect(() => {
     setItems((prevItems) => {
       const source = prevItems.length > 0 ? prevItems : initialCompetitors;
-      return source.map((item) => ({
-        ...item,
-        market: detectMarketFromDomain(item.domain, defaultMarket),
-      }));
+      let changed = false;
+      const updated = source.map((item) => {
+        const newMarket = detectMarketFromDomain(item.domain, defaultMarket);
+        if (newMarket !== item.market) changed = true;
+        return {
+          ...item,
+          market: newMarket,
+        };
+      });
+      if (changed) {
+        onChange(updated);
+      }
+      return updated;
     });
-  }, [defaultMarket, initialCompetitors]);
+  }, [defaultMarket, initialCompetitors, onChange]);
 
   const selectedCount = items.filter((i) => i.selected).length;
 

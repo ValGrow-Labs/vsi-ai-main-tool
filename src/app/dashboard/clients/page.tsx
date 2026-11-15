@@ -13,6 +13,7 @@ import { ButtonLink } from "@/components/ui/Button";
 import { OverviewScene } from "@/components/illustrations";
 import { AddWebsiteButton } from "@/components/intro/FeatureIntro";
 import { GuideTarget } from "@/components/onboarding/GuideTarget";
+import { DeleteProjectButton } from "@/features/clients";
 
 export const metadata: Metadata = { title: "Projects" };
 export const dynamic = "force-dynamic";
@@ -72,26 +73,41 @@ export default async function ProjectsPage() {
         </EmptyState>
       ) : (
         <div className="rounded-panel border border-line bg-surface">
-          <div className="hidden grid-cols-[minmax(0,1.6fr)_7rem_7rem_9rem] gap-4 rounded-t-panel border-b border-line bg-surface-2 px-4 py-2.5 text-caption font-medium text-ink-3 md:grid">
+          <div className="hidden grid-cols-[minmax(0,1.6fr)_6.5rem_6.5rem_8.5rem_3rem] gap-4 rounded-t-panel border-b border-line bg-surface-2 px-4 py-2.5 text-caption font-medium text-ink-3 md:grid">
             <span>Project</span>
             <span>Searches</span>
             <span>Open tasks</span>
             <span>Last check</span>
+            <span className="sr-only">Actions</span>
           </div>
           <ul className="divide-y divide-line">
             {projects.map((p) => {
               const c = counts.get(p.id)!;
               return (
-                <li key={p.id} className="grid gap-1 px-4 py-3 md:grid-cols-[minmax(0,1.6fr)_7rem_7rem_9rem] md:items-center md:gap-4">
-                  <div className="min-w-0">
-                    <Link href={`/dashboard/clients/${p.id}`} className="block truncate text-body font-medium text-ink hover:underline">
-                      {p.name}
-                      {p.id === active?.id && <span className="ml-2 text-caption font-normal text-brand-strong">Current</span>}
-                    </Link>
-                    <span className="block truncate text-support text-ink-3">
-                      {displayDomain(p.website) ?? "No website"}
-                      {p.agencyName ? ` · ${p.agencyName}` : ""}
-                    </span>
+                <li key={p.id} className="grid gap-2 px-4 py-3 md:grid-cols-[minmax(0,1.6fr)_6.5rem_6.5rem_8.5rem_3rem] md:items-center md:gap-4">
+                  <div className="flex items-start justify-between gap-2 min-w-0">
+                    <div className="min-w-0">
+                      <Link href={`/dashboard/clients/${p.id}`} className="block truncate text-body font-medium text-ink hover:underline">
+                        {p.name}
+                        {p.id === active?.id && <span className="ml-2 text-caption font-normal text-brand-strong">Current</span>}
+                      </Link>
+                      <span className="block truncate text-support text-ink-3">
+                        {displayDomain(p.website) ?? "No website"}
+                        {p.agencyName ? ` · ${p.agencyName}` : ""}
+                      </span>
+                    </div>
+                    <div className="md:hidden">
+                      <DeleteProjectButton
+                        project={{
+                          id: p.id,
+                          name: p.name,
+                          website: p.website,
+                          searches: c.searches,
+                          openTasks: c.openTasks,
+                          isCurrent: p.id === active?.id,
+                        }}
+                      />
+                    </div>
                   </div>
                   <span className="text-support tabular text-ink-2">
                     <span className="text-ink-3 md:hidden">Searches: </span>
@@ -101,7 +117,22 @@ export default async function ProjectsPage() {
                     <span className="text-ink-3 md:hidden">Open tasks: </span>
                     {c.openTasks}
                   </span>
-                  <span className="text-support text-ink-3">{c.lastCheck ? formatDate(c.lastCheck) : "Not checked yet"}</span>
+                  <span className="text-support text-ink-3">
+                    <span className="text-ink-3 md:hidden">Last check: </span>
+                    {c.lastCheck ? formatDate(c.lastCheck) : "Not checked yet"}
+                  </span>
+                  <div className="hidden md:flex md:justify-end">
+                    <DeleteProjectButton
+                      project={{
+                        id: p.id,
+                        name: p.name,
+                        website: p.website,
+                        searches: c.searches,
+                        openTasks: c.openTasks,
+                        isCurrent: p.id === active?.id,
+                      }}
+                    />
+                  </div>
                 </li>
               );
             })}

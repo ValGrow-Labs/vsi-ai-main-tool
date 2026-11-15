@@ -9,14 +9,18 @@ import { Button } from "@/components/ui/Button";
 /** Shown when a dashboard page fails to render. Nothing is lost; the page can be retried. */
 export default function DashboardError({
   error,
+  reset,
   unstable_retry,
 }: {
   error: Error & { digest?: string };
-  unstable_retry: () => void;
+  reset?: () => void;
+  unstable_retry?: () => void;
 }) {
   useEffect(() => {
     console.error("[dashboard] page failed", error.digest ?? error.message);
   }, [error]);
+
+  const handleRetry = reset ?? unstable_retry ?? (() => window.location.reload());
 
   return (
     <PageContainer>
@@ -24,7 +28,7 @@ export default function DashboardError({
         tone="critical"
         title="This page couldn't load"
         action={
-          <Button size="sm" onClick={() => unstable_retry()}>
+          <Button size="sm" onClick={() => handleRetry()}>
             <RotateCw size={14} strokeWidth={1.75} aria-hidden />
             Try again
           </Button>

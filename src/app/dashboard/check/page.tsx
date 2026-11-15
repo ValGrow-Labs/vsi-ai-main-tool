@@ -22,7 +22,7 @@ export default async function CheckPage({ searchParams }: { searchParams: Promis
           title="Check a search"
           description="See right now who Google and its AI answer show for any search, and whether your business is among them."
         />
-        <LiveSearchCheckView />
+        <LiveSearchCheckView defaultProject={active} />
       </PageContainer>
     );
   }

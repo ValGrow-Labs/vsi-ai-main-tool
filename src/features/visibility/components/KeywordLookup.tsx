@@ -1,16 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { markResearchIntent, sessionIntentStorage } from "@/lib/research-request";
+import { useActiveProject } from "@/components/layout/ProjectProvider";
+import { LOCATIONS, type Location } from "@/types/search";
 
-export const LOOKUP_LOCATIONS = ["United Arab Emirates", "United States", "United Kingdom", "India", "Sri Lanka", "Canada", "Australia", "Germany", "Singapore"];
+export const LOOKUP_LOCATIONS = ["India", "United States", "United Kingdom", "Sri Lanka", "Singapore", "United Arab Emirates", "Canada", "Australia", "Germany"];
 
 export default function KeywordLookup({
   initial = "",
-  initialLocation = "United Arab Emirates",
+  initialLocation,
   onSameLookup,
 }: {
   initial?: string;
@@ -19,8 +21,37 @@ export default function KeywordLookup({
   onSameLookup?: () => void;
 }) {
   const router = useRouter();
+  const project = useActiveProject();
+  const defaultCountry =
+    initialLocation ||
+    project?.country ||
+    (project?.defaultLocation && LOCATIONS[project.defaultLocation as Location]?.label) ||
+    "India";
+
   const [q, setQ] = useState(initial);
-  const [loc, setLoc] = useState(initialLocation);
+  const [loc, setLoc] = useState(defaultCountry);
+
+  useEffect(() => {
+    if (initialLocation) {
+      setLoc(initialLocation);
+    } else if (project?.country) {
+      setLoc(project.country);
+    } else if (project?.defaultLocation && LOCATIONS[project.defaultLocation as Location]?.label) {
+      setLoc(LOCATIONS[project.defaultLocation as Location].label);
+    }
+  }, [initialLocation, project]);
+
+  const locationList = LOOKUP_LOCATIONS.includes(loc) ? LOOKUP_LOCATIONS : [loc, ...LOOKUP_LOCATIONS];
+
+  const placeholderText = loc === "India"
+    ? "For example: best software development company in Mumbai"
+    : loc === "United States"
+    ? "For example: best digital marketing agency in New York"
+    : loc === "Singapore"
+    ? "For example: top SEO services in Singapore"
+    : loc === "Sri Lanka"
+    ? "For example: top web agency in Colombo"
+    : `For example: best services in ${loc}`;
 
   return (
     <form
@@ -46,7 +77,7 @@ export default function KeywordLookup({
           id="lookup-q"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="For example: best accountant in Dubai"
+          placeholder={placeholderText}
           className="h-9 w-full rounded-control border border-line bg-surface pl-9 pr-3 text-body text-ink placeholder:text-ink-3 focus:border-line-strong focus:outline-none"
         />
       </div>
@@ -59,7 +90,7 @@ export default function KeywordLookup({
         onChange={(e) => setLoc(e.target.value)}
         className="h-9 rounded-control border border-line bg-surface px-2.5 text-body text-ink focus:border-line-strong focus:outline-none"
       >
-        {LOOKUP_LOCATIONS.map((l) => (
+        {locationList.map((l) => (
           <option key={l} value={l}>
             {l}
           </option>

@@ -87,8 +87,8 @@ beforeEach(() => {
   vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://abcd1234.supabase.co");
   db.tables = {
     clients: [
-      { id: PROJECT_A, agency_id: "org-a", name: "A", website: "a.example", brand_name: "A", default_location: "ae" },
-      { id: PROJECT_B, agency_id: "org-b", name: "B", website: "b.example", brand_name: "B", default_location: "ae" },
+      { id: PROJECT_A, agency_id: "org-a", name: "A", website: "a.example", brand_name: "A", default_location: "ae", country: "United Arab Emirates" },
+      { id: PROJECT_B, agency_id: "org-b", name: "B", website: "b.example", brand_name: "B", default_location: "ae", country: "United Arab Emirates" },
     ],
     tasks: [{ id: TASK_B, agency_id: "org-b", client_id: PROJECT_B, title: "theirs" }],
     search_results: [
