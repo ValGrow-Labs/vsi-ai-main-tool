@@ -8,6 +8,8 @@ interface SerperOrganicResult {
   position: number;
   title: string;
   link: string;
+  displayed_link?: string;
+  source?: string;
   snippet?: string;
 }
 
@@ -23,12 +25,66 @@ interface SerperResponse {
   provider: "serper" | "serpapi" | "demo";
 }
 
-function extractDomain(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return "";
+const KNOWN_SOURCES: Record<string, string> = {
+  "youtube": "youtube.com",
+  "wikipedia": "wikipedia.org",
+  "reddit": "reddit.com",
+  "linkedin": "linkedin.com",
+  "quora": "quora.com",
+  "medium": "medium.com",
+  "github": "github.com",
+  "cambridge dictionary": "dictionary.cambridge.org",
+  "merriam-webster": "merriam-webster.com",
+  "vocabulary.com": "vocabulary.com",
+  "fast.com": "fast.com",
+  "google play": "play.google.com",
+};
+
+export function extractDomain(url?: string, displayedLink?: string, source?: string): string {
+  // 1. Try displayed_link first (most accurate for Google organic results, e.g. "https://ai.toolcent.com › chatbots")
+  if (displayedLink) {
+    try {
+      const firstPart = displayedLink.split(/\s*›\s*|\s+/)[0];
+      const withProto = /^https?:\/\//i.test(firstPart) ? firstPart : `https://${firstPart}`;
+      const host = new URL(withProto).hostname.replace(/^www\./, "");
+      if (host && !host.includes("google.")) return host;
+    } catch {}
   }
+
+  // 2. Try parsing direct link or unwrapping Google redirect q/url param
+  if (url) {
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname.includes("google.") && (parsed.pathname.includes("/url") || parsed.pathname.includes("/goto"))) {
+        const target = parsed.searchParams.get("q") || parsed.searchParams.get("url");
+        if (target && /^https?:\/\//i.test(target)) {
+          try {
+            const host = new URL(target).hostname.replace(/^www\./, "");
+            if (host && !host.includes("google.")) return host;
+          } catch {}
+        }
+      } else if (!parsed.hostname.includes("google.")) {
+        return parsed.hostname.replace(/^www\./, "");
+      }
+    } catch {}
+  }
+
+  // 3. Try source mapping or brand stem
+  if (source) {
+    const s = source.trim().toLowerCase();
+    if (KNOWN_SOURCES[s]) return KNOWN_SOURCES[s];
+    if (s.includes(".")) return s.replace(/^www\./, "");
+    if (/^[a-z0-9-]+$/i.test(s)) return `${s}.com`;
+  }
+
+  // 4. Fallback from raw URL
+  if (url) {
+    try {
+      return new URL(url).hostname.replace(/^www\./, "");
+    } catch {}
+  }
+
+  return "";
 }
 
 function detectSerpFeatures(raw: SerperResponse): string[] {
@@ -105,7 +161,7 @@ async function fetchOrganicResults(keyword: string, loc: typeof LOCATIONS[Locati
   if (!res.ok) throw new ProviderUnavailableError("serpapi", "PROVIDER_ERROR", `SerpApi HTTP status ${res.status}`);
 
   let data: {
-    organic_results?: Array<{ position?: number; title?: string; link?: string; snippet?: string }>;
+    organic_results?: Array<{ position?: number; title?: string; link?: string; displayed_link?: string; source?: string; snippet?: string }>;
     knowledge_graph?: object;
     answer_box?: object;
     related_questions?: object[];
@@ -129,6 +185,8 @@ async function fetchOrganicResults(keyword: string, loc: typeof LOCATIONS[Locati
     position: r.position ?? idx + 1,
     title: r.title ?? "",
     link: r.link ?? "",
+    displayed_link: r.displayed_link,
+    source: r.source,
     snippet: r.snippet ?? "",
   }));
 
@@ -152,7 +210,7 @@ export async function fetchBulkRanks(
   const organic = raw.organic ?? [];
 
   return domains.map((domain) => {
-    const match = organic.find((r) => hostMatchesDomain(extractDomain(r.link), domain));
+    const match = organic.find((r) => hostMatchesDomain(extractDomain(r.link, r.displayed_link, r.source), domain));
     return {
       domain,
       position: match?.position ?? null,
@@ -184,12 +242,12 @@ export async function fetchRank(
   const raw = await fetchOrganicResults(keyword, loc);
 
   const matchesClient = (host: string) => hostMatchesDomain(host, validClientDomain);
-  const match = raw.organic?.find((r) => matchesClient(extractDomain(r.link)));
+  const match = raw.organic?.find((r) => matchesClient(extractDomain(r.link, r.displayed_link, r.source)));
 
   const organicResults: OrganicResult[] = (raw.organic ?? [])
     .slice(0, 10)
     .map((r) => {
-      const rDomain = extractDomain(r.link);
+      const rDomain = extractDomain(r.link, r.displayed_link, r.source);
       const isClient = matchesClient(rDomain);
       return {
         position: r.position,

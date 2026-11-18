@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
     // Handle non-streaming JSON request if requested
     if (requestStream === false || req.headers.get("accept") === "application/json") {
       let fullReply = "";
-      let modelUsed = "gemini-2.5-flash";
+      let modelUsed = "gemini-3.5-flash";
 
       const resInfo = await generateAiResponseStream(messages, fullSystemPrompt, {
         onChunk: (chunk) => {

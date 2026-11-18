@@ -3,7 +3,7 @@ import { normaliseDomain } from "@/lib/url-input";
 import { scrapeUrl, scrapeWebsiteForAnalysis } from "@/lib/firecrawl";
 import { requireAgencyApi } from "@/lib/auth";
 import { checkUrlPolicy, UnsafeUrlError } from "@/lib/net/safe-fetch";
-import { callOpenAI, callOpenRouter, callGroq, OPENAI_ANALYSIS_MODEL, GROQ_ANALYSIS_MODEL } from "@/lib/llm";
+import { callOpenAI, callOpenRouter, callGroq, callGemini, OPENAI_ANALYSIS_MODEL, GROQ_ANALYSIS_MODEL } from "@/lib/llm";
 import { failureReason, type ProviderFailureReason } from "@/lib/provider-status";
 import { getDomainAnalysisCache, saveDomainAnalysisCache } from "@/lib/domain-cache";
 import {
@@ -113,18 +113,41 @@ async function callAvailableLLM(
   groqKey?: string,
   openrouterKey?: string
 ): Promise<{ content: string | null; rateLimited: boolean }> {
+  const preferGemini = (process.env.AI_PROVIDER || "").toUpperCase() === "GEMINI";
+  const geminiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)?.trim();
+
+  // Try Gemini first if user configured AI_PROVIDER=GEMINI
+  if (preferGemini && geminiKey) {
+    try {
+      const res = await callGemini(system, prompt, geminiKey, maxTokens);
+      if (res?.content) return res;
+    } catch (err) {
+      console.warn("[analyze-website] Gemini call error:", err);
+    }
+  }
+
   // 1. Try OpenAI if key exists
   if (openaiKey) {
     try {
       const res = await callOpenAI(OPENAI_ANALYSIS_MODEL, system, prompt, openaiKey, maxTokens);
-      if (res && (res.content || (!groqKey && res.rateLimited))) return res;
+      if (res && (res.content || (!groqKey && !geminiKey && res.rateLimited))) return res;
     } catch (err) {
-      if (!groqKey) throw err;
-      console.warn("[analyze-website] OpenAI call error, attempting Groq fallback:", err);
+      if (!groqKey && !geminiKey) throw err;
+      console.warn("[analyze-website] OpenAI call error, attempting fallback:", err);
     }
   }
 
-  // 2. Try Groq if key exists (either as primary or fallback)
+  // 2. Try Gemini fallback if key exists
+  if (geminiKey) {
+    try {
+      const res = await callGemini(system, prompt, geminiKey, maxTokens);
+      if (res?.content) return res;
+    } catch (err) {
+      console.warn("[analyze-website] Gemini fallback error:", err);
+    }
+  }
+
+  // 3. Try Groq if key exists (either as primary or fallback)
   if (groqKey) {
     try {
       const res = await callGroq(GROQ_ANALYSIS_MODEL, system, prompt, groqKey, maxTokens);
@@ -134,8 +157,8 @@ async function callAvailableLLM(
     }
   }
 
-  // 3. Fallback to OpenRouter only if neither OpenAI nor Groq was used
-  if (!openaiKey && !groqKey && openrouterKey) {
+  // 4. Fallback to OpenRouter only if other providers were not used
+  if (!openaiKey && !groqKey && !geminiKey && openrouterKey) {
     return await callOpenRouter(MODEL, system, prompt, openrouterKey, maxTokens);
   }
 
@@ -211,12 +234,13 @@ export async function POST(req: NextRequest) {
   }
 
   const openaiKey = process.env.OPENAI_API_KEY?.trim();
+  const geminiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)?.trim();
   const groqKey = process.env.GROQ_API_KEY?.trim();
   const openrouterKey = process.env.OPENROUTER_API_KEY?.trim();
 
   // Partial section regeneration
   if (body.action === "regenerate" && body.section) {
-    if (!openaiKey && !groqKey && !openrouterKey) {
+    if (!openaiKey && !groqKey && !openrouterKey && !geminiKey) {
       return NextResponse.json({ success: false, error: "AI service not configured." }, { status: 503 });
     }
     const rawUrl = typeof body.url === "string" ? body.url.trim() : "";

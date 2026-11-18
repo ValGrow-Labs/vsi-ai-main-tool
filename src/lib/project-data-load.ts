@@ -41,7 +41,14 @@ export const loadTrackedKeywords = cache(async (projectId: string): Promise<{ ro
 });
 
 /** Columns from migrations that may not be applied yet; dropped on retry when missing. */
-const OPTIONAL_COLUMNS = ["rank_status"];
+const OPTIONAL_COLUMNS = [
+  "rank_status",
+  "check_provenance",
+  "chatgpt_entity_match",
+  "chatgpt_actual_entity",
+  "chatgpt_competitors",
+  "chatgpt_cited_urls",
+];
 
 /** The last 120 days of checks for a project, newest first. */
 export async function loadRecentResults(projectId: string, columns: string): Promise<{ data: unknown[] | null; error: { code?: string } | null }> {
@@ -56,13 +63,19 @@ export async function loadRecentResults(projectId: string, columns: string): Pro
       .order("created_at", { ascending: false })
       .limit(RECENT_LIMIT);
   let { data, error } = await run(columns);
-  // Migration 042 not applied yet: read without its columns (they then count as NULL).
-  if (error && /column|42703/i.test(`${error.code ?? ""} ${error.message ?? ""}`)) {
-    const reduced = columns
+  // Missing column error handling (e.g. 42703, column does not exist)
+  if (error && /column|42703|PGRST204/i.test(`${error.code ?? ""} ${error.message ?? ""}`)) {
+    let reducedCols = columns
       .split(",")
       .map((c) => c.trim())
-      .filter((c) => c && !OPTIONAL_COLUMNS.includes(c))
-      .join(", ");
+      .filter((c) => c && !OPTIONAL_COLUMNS.includes(c));
+
+    const matchCol = (error.message ?? "").match(/column\s+(?:search_results\.)?["']?([a-zA-Z0-9_]+)["']?\s+does not exist/i);
+    if (matchCol?.[1]) {
+      reducedCols = reducedCols.filter((c) => c !== matchCol[1]);
+    }
+
+    const reduced = reducedCols.join(", ");
     if (reduced !== columns) ({ data, error } = await run(reduced));
   }
   return { data: (data as unknown[] | null) ?? null, error };

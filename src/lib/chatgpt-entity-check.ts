@@ -27,7 +27,8 @@ export async function checkChatGPTEntityMatch(opts: {
 }): Promise<EntityMatchResult | null> {
   const openaiKey = process.env.OPENAI_API_KEY;
   const openrouterKey = process.env.OPENROUTER_API_KEY;
-  if (!openaiKey && !openrouterKey) return null;
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (!openaiKey && !openrouterKey && !geminiKey) return null;
 
   // Use the same cheap settings the rest of the pipeline uses so we
   // don't blow the OpenAI credit cap on disambiguation calls.
@@ -53,6 +54,49 @@ Heuristics:
 
 Return ONLY this JSON: { "aboutClient": true | false, "actualEntity": "<short noun phrase, e.g. 'biotech startup in San Diego' or 'agritech company'>", "confidence": "low" | "medium" | "high" }`;
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+
+  // If Gemini is preferred or OpenAI is absent, try Gemini
+  const preferGemini = (process.env.AI_PROVIDER || "").toUpperCase() === "GEMINI";
+  if ((preferGemini || !openaiKey) && geminiKey) {
+    try {
+      const gRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${geminiKey}`,
+        {
+          method: "POST",
+          signal: controller.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: `${prompt}\nRespond strictly with valid JSON only.` }] }],
+            generationConfig: { temperature: 0.0, maxOutputTokens: 150 },
+          }),
+        }
+      );
+      if (gRes.ok) {
+        const gData = await gRes.json();
+        const content = gData.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (content) {
+          const match = content.match(/\{[\s\S]*\}/);
+          if (match) {
+            const parsed = JSON.parse(match[0]) as { aboutClient?: boolean; actualEntity?: string; confidence?: string };
+            const conf = parsed.confidence === "high" || parsed.confidence === "medium" || parsed.confidence === "low"
+              ? parsed.confidence
+              : "medium";
+            clearTimeout(timer);
+            return {
+              aboutClient: parsed.aboutClient !== false,
+              actualEntity: parsed.actualEntity ?? "unknown entity",
+              confidence: conf,
+            };
+          }
+        }
+      }
+    } catch {
+      // Fall through to other providers
+    }
+  }
+
   const endpoint = openaiKey
     ? "https://api.openai.com/v1/chat/completions"
     : "https://openrouter.ai/api/v1/chat/completions";
@@ -65,9 +109,6 @@ Return ONLY this JSON: { "aboutClient": true | false, "actualEntity": "<short no
         "X-Title": "VSI Search Intelligence",
       };
   const model = openaiKey ? openaiModel : MODEL_OPENROUTER;
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20000);
   try {
     const res = await fetch(endpoint, {
       method: "POST",

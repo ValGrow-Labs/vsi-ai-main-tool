@@ -26,6 +26,7 @@ interface SerpApiReference {
   link: string;
   snippet?: string;
   source?: string;
+  source_icon?: string;
 }
 
 interface SerpApiAIOverview {
@@ -41,12 +42,68 @@ interface SerpApiAIOverview {
 // Helpers
 // ─────────────────────────────────────────
 
-function extractDomain(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return "";
+const KNOWN_SOURCES: Record<string, string> = {
+  "youtube": "youtube.com",
+  "wikipedia": "wikipedia.org",
+  "reddit": "reddit.com",
+  "linkedin": "linkedin.com",
+  "quora": "quora.com",
+  "medium": "medium.com",
+  "github": "github.com",
+  "cambridge dictionary": "dictionary.cambridge.org",
+  "merriam-webster": "merriam-webster.com",
+  "vocabulary.com": "vocabulary.com",
+  "fast.com": "fast.com",
+  "google play": "play.google.com",
+};
+
+export function extractDomain(url?: string, source?: string, sourceIcon?: string): string {
+  // 1. Try sourceIcon (Google favicon service often holds ?url=https://...)
+  if (sourceIcon) {
+    try {
+      const parsedIcon = new URL(sourceIcon);
+      const targetUrl = parsedIcon.searchParams.get("url");
+      if (targetUrl) {
+        const host = new URL(targetUrl).hostname.replace(/^www\./, "");
+        if (host && !host.includes("google.")) return host;
+      }
+    } catch {}
   }
+
+  // 2. Try parsing direct link or unwrapping Google redirect q/url param
+  if (url) {
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname.includes("google.") && (parsed.pathname.includes("/url") || parsed.pathname.includes("/goto"))) {
+        const target = parsed.searchParams.get("q") || parsed.searchParams.get("url");
+        if (target && /^https?:\/\//i.test(target)) {
+          try {
+            const host = new URL(target).hostname.replace(/^www\./, "");
+            if (host && !host.includes("google.")) return host;
+          } catch {}
+        }
+      } else if (!parsed.hostname.includes("google.")) {
+        return parsed.hostname.replace(/^www\./, "");
+      }
+    } catch {}
+  }
+
+  // 3. Try source mapping or brand stem
+  if (source) {
+    const s = source.trim().toLowerCase();
+    if (KNOWN_SOURCES[s]) return KNOWN_SOURCES[s];
+    if (s.includes(".")) return s.replace(/^www\./, "");
+    if (/^[a-z0-9-]+$/i.test(s)) return `${s}.com`;
+  }
+
+  // 4. Fallback from raw URL
+  if (url) {
+    try {
+      return new URL(url).hostname.replace(/^www\./, "");
+    } catch {}
+  }
+
+  return "";
 }
 
 /** Flatten SerpApi text_blocks into plain text + structured UI blocks. */
@@ -253,7 +310,7 @@ export async function fetchAIO(
     .slice()
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
     .map((ref, i) => {
-      const citDomain = extractDomain(ref.link);
+      const citDomain = extractDomain(ref.link, ref.source, ref.source_icon);
       const isClient = !!validClientDomain && hostMatchesDomain(citDomain, validClientDomain);
       return {
         position: i + 1,

@@ -654,7 +654,6 @@ export default function NewProjectPage() {
           hintText="You can change these settings later."
           onBack={() => setStep(2)}
           onNext={() => setStep(4)}
-          onSkip={() => setStep(4)}
         />
       )}
 

@@ -8,7 +8,6 @@ interface StepFooterProps {
   totalSteps?: number;
   onBack?: () => void;
   onNext?: () => void;
-  onSkip?: () => void;
   nextLabel?: string;
   isSubmitting?: boolean;
   canContinue?: boolean;
@@ -21,7 +20,6 @@ export function StepFooter({
   totalSteps = 4,
   onBack,
   onNext,
-  onSkip,
   nextLabel,
   isSubmitting = false,
   canContinue = true,
@@ -65,19 +63,8 @@ export function StepFooter({
           </div>
         </div>
 
-        {/* Right: Skip and Continue / Start Analysis button */}
+        {/* Right: Continue / Start Analysis button */}
         <div className="flex items-center gap-3">
-          {onSkip && !isLastStep && (
-            <button
-              type="button"
-              onClick={onSkip}
-              disabled={isSubmitting}
-              className="px-3 text-support font-medium text-ink-3 hover:text-ink transition-colors disabled:opacity-50 cursor-pointer"
-            >
-              Skip for now
-            </button>
-          )}
-
           <button
             type="button"
             onClick={onNext}

@@ -119,6 +119,47 @@ export async function callGroq(
   }
 }
 
+export async function callGemini(
+  systemPrompt: string,
+  userPrompt: string,
+  apiKey: string,
+  maxTokens = 1200
+): Promise<{ content: string | null; rateLimited: boolean }> {
+  const models = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash"];
+  for (const model of models) {
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: `${systemPrompt}\n\n${userPrompt}\n\nRespond strictly with valid JSON only.` }],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: maxTokens,
+            responseMimeType: "application/json",
+          },
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) {
+        if (res.status === 429) return { content: null, rateLimited: true };
+        continue;
+      }
+      const data = await res.json().catch(() => null);
+      const content = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? null;
+      if (content) return { content, rateLimited: false };
+    } catch {
+      continue;
+    }
+  }
+  return { content: null, rateLimited: false };
+}
+
 export async function callOpenAI(
   model: string,
   systemPrompt: string,

@@ -102,7 +102,12 @@ export async function GET() {
       .select("*")
       .eq("user_id", session.userId)
       .order("created_at", { ascending: false });
-    if (error) return dbError("list", error);
+    if (error) {
+      if (error.code === "42703") {
+        return NextResponse.json({ success: true, messages: [] });
+      }
+      return dbError("list", error);
+    }
     return NextResponse.json({ success: true, messages: (data ?? []).map((r: Row) => mapDbRowToMessage(r)) });
   } catch (e) {
     return dbError("list", { message: e instanceof Error ? e.message : String(e) });

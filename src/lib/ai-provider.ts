@@ -31,7 +31,7 @@ export async function generateAiResponseStream(
   if (provider === "GEMINI" && (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)) {
     try {
       await streamGemini(messages, systemPrompt, callbacks);
-      return { providerUsed: "Google Gemini", modelUsed: "gemini-2.5-flash" };
+      return { providerUsed: "Google Gemini", modelUsed: "gemini-3.5-flash" };
     } catch (e) {
       console.warn("[ai-provider] Gemini failed, falling back...", e);
     }
@@ -70,7 +70,7 @@ export async function generateAiResponseStream(
   if (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY) {
     try {
       await streamGemini(messages, systemPrompt, callbacks);
-      return { providerUsed: "Google Gemini", modelUsed: "gemini-2.5-flash" };
+      return { providerUsed: "Google Gemini", modelUsed: "gemini-3.5-flash" };
     } catch (e) {
       console.warn("[ai-provider] Gemini priority attempt failed", e);
     }
@@ -171,7 +171,7 @@ async function streamGemini(
   ];
 
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse&key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse&key=${apiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -184,7 +184,7 @@ async function streamGemini(
 
   if (!res.ok || !res.body) {
     const resFallback = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?alt=sse&key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:streamGenerateContent?alt=sse&key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },

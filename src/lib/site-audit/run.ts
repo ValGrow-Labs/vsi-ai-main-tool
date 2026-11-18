@@ -32,14 +32,59 @@ type FetchOutcome =
   | (SafeFetchResult & { responseTimeMs: number })
   | { error: string; kind: FetchFailureKind; responseTimeMs: number };
 
-async function tryFetch(url: string, opts?: Parameters<typeof safeFetch>[1]): Promise<FetchOutcome> {
+async function fetchWithFirecrawl(url: string): Promise<(SafeFetchResult & { responseTimeMs: number }) | null> {
+  const key = process.env.FIRECRAWL_API_KEY;
+  if (!key) return null;
+  const start = Date.now();
+  try {
+    const res = await fetch("https://api.firecrawl.dev/v1/scrape", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        url,
+        formats: ["html"],
+        onlyMainContent: false,
+        timeout: 25000,
+        waitFor: 1000,
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { success?: boolean; data?: { html?: string } };
+    if (!data.success || !data.data?.html) return null;
+    return {
+      url,
+      status: 200,
+      ok: true,
+      contentType: "text/html",
+      body: data.data.html,
+      truncated: false,
+      responseTimeMs: Date.now() - start,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function tryFetch(url: string, opts?: Parameters<typeof safeFetch>[1], allowFallback = false): Promise<FetchOutcome> {
   const start = Date.now();
   try {
     const res = await safeFetch(url, opts);
+    if (!res.ok && BLOCKED_STATUSES.has(res.status) && allowFallback && process.env.FIRECRAWL_API_KEY) {
+      const fc = await fetchWithFirecrawl(url);
+      if (fc) return fc;
+    }
     return { ...res, responseTimeMs: Date.now() - start };
   } catch (e) {
     const responseTimeMs = Date.now() - start;
     const kind = classifyFetchError(e);
+    if (allowFallback && process.env.FIRECRAWL_API_KEY && (kind === "network" || kind === "timeout")) {
+      const fc = await fetchWithFirecrawl(url);
+      if (fc) return fc;
+    }
     if (e instanceof UnsafeUrlError) return { error: e.message, kind, responseTimeMs };
     return { error: FETCH_FAILURE_TEXT[kind], kind, responseTimeMs };
   }
@@ -116,8 +161,12 @@ export async function runSiteAudit(domainInput: string, seoSetup?: SeoSetupInput
   const siteHost = normalised.domain;
 
   // Homepage: prefer https, fall back to http.
-  let home = await tryFetch(`https://${siteHost}/`);
-  if ("error" in home) home = await tryFetch(`http://${siteHost}/`);
+  let home = await tryFetch(`https://${siteHost}/`, undefined, true);
+  if ("error" in home) home = await tryFetch(`http://${siteHost}/`, undefined, true);
+  if (!("error" in home) && !home.ok && BLOCKED_STATUSES.has(home.status)) {
+    const fc = await fetchWithFirecrawl(home.url || `https://${siteHost}/`);
+    if (fc) home = fc;
+  }
   if ("error" in home) {
     // Nothing answered at all: stop here rather than crawl a dead site.
     const homePage = failedPage(`https://${siteHost}/`, 0, home.error, home.kind);
@@ -157,7 +206,11 @@ export async function runSiteAudit(domainInput: string, seoSetup?: SeoSetupInput
   }
 
   const others = await mapLimit(picks, 4, async (url): Promise<PageFacts> => {
-    const res = await tryFetch(url);
+    let res = await tryFetch(url, undefined, true);
+    if (!("error" in res) && !res.ok && BLOCKED_STATUSES.has(res.status)) {
+      const fc = await fetchWithFirecrawl(url);
+      if (fc) res = fc;
+    }
     if ("error" in res) return failedPage(url, 0, res.error, res.kind);
     if (!res.ok || !/html/i.test(res.contentType)) return failedPage(res.url, res.status, null);
     return parsePage(res.body, res.url, res.status, host, res.responseTimeMs);

@@ -21,7 +21,7 @@ export interface ChatGPTCheckResult {
   status: AiCheckStatus;
   failure_reason?: ProviderFailureReason;
   /** Provenance of the answer. Only OpenAI answers are ever labelled ChatGPT. */
-  provider: "openai" | null;
+  provider: "openai" | "gemini" | null;
   model: string | null;
   checked_at: string;
 }
@@ -105,6 +105,37 @@ function skipped(reason: string, status: AiCheckStatus, failure?: ProviderFailur
   };
 }
 
+async function callGeminiForCheck(
+  keyword: string,
+  todayLabel: string,
+  currentYear: number,
+  apiKey: string,
+  signal: AbortSignal,
+): Promise<{ text: string | null; model: string }> {
+  const models = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash"];
+  const prompt = `Today's date is ${todayLabel}. The current year is ${currentYear}. Any year you mention in your answer MUST be ${currentYear} or later — never an earlier year. You are a helpful research assistant. When asked a question, answer concisely based on what you know. Reference real businesses, products, or sources where appropriate. Keep the answer under 400 words.\n\nQuestion: ${keyword}`;
+  for (const m of models) {
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`, {
+        method: "POST",
+        signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.3, maxOutputTokens: 800 },
+        }),
+      });
+      if (!res.ok) continue;
+      const data = (await res.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? null;
+      if (text) return { text, model: m };
+    } catch {
+      continue;
+    }
+  }
+  return { text: null, model: "gemini-3.5-flash" };
+}
+
 export async function runChatGPTCheck(opts: {
   keyword: string;
   clientBrand: string;
@@ -112,13 +143,12 @@ export async function runChatGPTCheck(opts: {
   /** The project's tracked competitors; the only source of competitor mentions. */
   competitors?: ProjectCompetitor[];
 }): Promise<ChatGPTCheckResult> {
-  const openaiKey = process.env.OPENAI_API_KEY;
+  const preferGemini = (process.env.AI_PROVIDER || "").toUpperCase() === "GEMINI";
+  const geminiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "").trim();
+  const openaiKey = process.env.OPENAI_API_KEY?.trim();
 
-  // The ChatGPT check is answered by OpenAI only. Without an OpenAI key the
-  // check doesn't run (not checked) — another model's answer is never
-  // stored or labelled as ChatGPT.
-  if (!openaiKey) {
-    return skipped("ChatGPT checks need OPENAI_API_KEY", "not_checked", "PROVIDER_NOT_CONFIGURED");
+  if (!openaiKey && !geminiKey) {
+    return skipped("AI checks need OPENAI_API_KEY or GEMINI_API_KEY", "not_checked", "PROVIDER_NOT_CONFIGURED");
   }
 
   const endpoint = "https://api.openai.com/v1/chat/completions";
@@ -126,14 +156,11 @@ export async function runChatGPTCheck(opts: {
     "Authorization": `Bearer ${openaiKey}`,
     "Content-Type": "application/json",
   };
-  // Model is super-admin-configurable so we can balance cost vs grounding.
-  // Default = plain gpt-4o-mini (no per-search fee). Flip to
-  // gpt-4o-mini-search-preview from /admin/settings when an agency
-  // is paying for the search tier.
   const { getSetting } = await import("@/lib/settings");
   const searchEnabled = await getSetting<boolean>("openai_search_enabled");
   const configuredModel = await getSetting<string>("openai_chatgpt_model");
-  const model = searchEnabled ? "gpt-4o-mini-search-preview" : (configuredModel || "gpt-4o-mini");
+  let model = searchEnabled ? "gpt-4o-mini-search-preview" : (configuredModel || "gpt-4o-mini");
+  let responseProvider: "openai" | "gemini" = "openai";
 
   const today = new Date();
   const todayLabel = today.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
@@ -151,42 +178,80 @@ export async function runChatGPTCheck(opts: {
     { role: "user", content: opts.keyword },
   ];
 
-  // Per-call timeout so a hanging free model doesn't stall the pipeline
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 40000);
 
-  let data: OpenAIResponse;
-  try {
-    const res = await fetch(endpoint, {
-      method: "POST",
-      signal: controller.signal,
-      headers,
-      body: JSON.stringify({
-        model,
-        messages,
-        max_tokens: 800,
-        temperature: 0.3,
-      }),
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      const reason: ProviderFailureReason =
-        res.status === 401 || res.status === 403 ? "PROVIDER_AUTH_FAILED" : res.status === 429 ? "PROVIDER_RATE_LIMITED" : "PROVIDER_ERROR";
-      return skipped(`HTTP ${res.status} ${text.slice(0, 200)}`, "check_failed", reason, model);
+  let data: OpenAIResponse | undefined;
+
+  // Try Gemini first if user configured AI_PROVIDER=GEMINI or if OpenAI key is missing
+  if ((preferGemini || !openaiKey) && geminiKey) {
+    const geminiRes = await callGeminiForCheck(opts.keyword, todayLabel, currentYear, geminiKey, controller.signal);
+    if (geminiRes.text) {
+      data = { choices: [{ message: { content: geminiRes.text } }] };
+      model = geminiRes.model;
+      responseProvider = "gemini";
     }
+  }
+
+  if (!data && openaiKey) {
     try {
-      data = (await res.json()) as OpenAIResponse;
-    } catch {
-      return skipped("OpenAI returned invalid JSON", "check_failed", "INVALID_RESPONSE", model);
+      const res = await fetch(endpoint, {
+        method: "POST",
+        signal: controller.signal,
+        headers,
+        body: JSON.stringify({
+          model,
+          messages,
+          max_tokens: 800,
+          temperature: 0.3,
+        }),
+      });
+      if (!res.ok) {
+        // If OpenAI authentication failed and Gemini key is configured, fallback to Gemini
+        if ((res.status === 401 || res.status === 403) && geminiKey) {
+          const geminiRes = await callGeminiForCheck(opts.keyword, todayLabel, currentYear, geminiKey, controller.signal);
+          if (geminiRes.text) {
+            data = { choices: [{ message: { content: geminiRes.text } }] };
+            model = geminiRes.model;
+            responseProvider = "gemini";
+          }
+        }
+        if (!data) {
+          const text = await res.text().catch(() => "");
+          const reason: ProviderFailureReason =
+            res.status === 401 || res.status === 403 ? "PROVIDER_AUTH_FAILED" : res.status === 429 ? "PROVIDER_RATE_LIMITED" : "PROVIDER_ERROR";
+          return skipped(`HTTP ${res.status} ${text.slice(0, 200)}`, "check_failed", reason, model);
+        }
+      } else {
+        try {
+          data = (await res.json()) as OpenAIResponse;
+        } catch {
+          return skipped("OpenAI returned invalid JSON", "check_failed", "INVALID_RESPONSE", model);
+        }
+        if (data.error) {
+          return skipped(data.error.message ?? "LLM API error", "check_failed", "PROVIDER_ERROR", model);
+        }
+      }
+    } catch (err) {
+      if (geminiKey) {
+        const geminiRes = await callGeminiForCheck(opts.keyword, todayLabel, currentYear, geminiKey, controller.signal);
+        if (geminiRes.text) {
+          data = { choices: [{ message: { content: geminiRes.text } }] };
+          model = geminiRes.model;
+          responseProvider = "gemini";
+        }
+      }
+      if (!data) {
+        const msg = err instanceof Error ? err.message : "Network error";
+        return skipped(msg.includes("abort") ? "Timed out after 40s" : msg, "check_failed", msg.includes("abort") ? "PROVIDER_TIMEOUT" : failureReason(err), model);
+      }
+    } finally {
+      clearTimeout(timer);
     }
-    if (data.error) {
-      return skipped(data.error.message ?? "LLM API error", "check_failed", "PROVIDER_ERROR", model);
-    }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Network error";
-    return skipped(msg.includes("abort") ? "Timed out after 40s" : msg, "check_failed", msg.includes("abort") ? "PROVIDER_TIMEOUT" : failureReason(err), model);
-  } finally {
-    clearTimeout(timer);
+  }
+
+  if (!data) {
+    return skipped("No AI model available to check the search.", "check_failed", "PROVIDER_NOT_CONFIGURED", model);
   }
 
   const message = data.choices?.[0]?.message;
@@ -260,7 +325,7 @@ export async function runChatGPTCheck(opts: {
     entity_match: entityMatch,
     entity_actual: entityActual,
     status: "answered",
-    provider: "openai",
+    provider: responseProvider,
     model,
     checked_at: new Date().toISOString(),
   };
