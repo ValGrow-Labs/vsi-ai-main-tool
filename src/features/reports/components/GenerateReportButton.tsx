@@ -33,6 +33,13 @@ export default function GenerateReportButton({
       });
       const data = (await res.json().catch(() => ({}))) as { share_url?: string; error?: string };
       if (!res.ok || !data.share_url) {
+        if (res.status === 401) {
+          setError("Session expired. Please click below to sign in again.");
+          setTimeout(() => {
+            window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`;
+          }, 1500);
+          return;
+        }
         setError(data.error ?? "We couldn't create the report. Please try again.");
         return;
       }

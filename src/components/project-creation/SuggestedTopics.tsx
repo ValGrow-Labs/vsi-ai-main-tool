@@ -198,15 +198,16 @@ export function SuggestedTopics({
             placeholder="Add a topic (e.g. Footwear)"
             value={newTopicInput}
             onChange={(e) => setNewTopicInput(e.target.value)}
-            className="h-9 w-full max-w-xs rounded-control border border-line-strong bg-surface px-3 text-support text-ink placeholder:text-ink-3 focus:border-brand focus:outline-none"
+            className="h-9 flex-1 min-w-0 max-w-sm rounded-control border border-line-strong bg-surface px-3 text-support text-ink placeholder:text-ink-3 focus:border-brand focus:outline-none"
           />
           <button
             type="submit"
             disabled={!newTopicInput.trim()}
-            className="flex h-9 items-center gap-1.5 rounded-control bg-surface-2 px-3 text-support font-medium text-ink border border-line hover:bg-brand-soft hover:text-brand-strong disabled:opacity-40 cursor-pointer"
+            className="flex h-9 items-center gap-1.5 rounded-control bg-surface-2 px-3 text-support font-medium text-ink border border-line hover:bg-brand-soft hover:text-brand-strong disabled:opacity-40 cursor-pointer shrink-0"
           >
             <Plus className="h-4 w-4" />
-            <span>Add topic</span>
+            <span className="hidden sm:inline">Add topic</span>
+            <span className="sm:hidden">Add</span>
           </button>
         </form>
       )}

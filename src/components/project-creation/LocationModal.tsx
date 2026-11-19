@@ -95,7 +95,7 @@ export function LocationModal({
           initial={{ opacity: 0, scale: 0.95, y: 10 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 10 }}
-          className="relative z-10 w-full max-w-lg rounded-2xl border border-line bg-surface p-6 shadow-overlay space-y-6 max-h-[90vh] flex flex-col"
+          className="relative z-10 w-full max-w-lg rounded-2xl border border-line bg-surface p-4 sm:p-6 shadow-overlay space-y-5 sm:space-y-6 max-h-[92vh] flex flex-col"
         >
           {/* Header */}
           <div className="flex items-center justify-between border-b border-line pb-4">

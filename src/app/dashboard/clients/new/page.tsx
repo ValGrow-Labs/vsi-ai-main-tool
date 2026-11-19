@@ -82,9 +82,55 @@ export default function NewProjectPage() {
 
   // Start analysis job submission state
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRegeneratingCompetitors, setIsRegeneratingCompetitors] = useState(false);
   const [showStartModal, setShowStartModal] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [saveProgress, setSaveProgress] = useState<SaveProgress>(NO_SAVE);
+
+  async function fetchCompetitorsForLocation(targetLoc: string, targetLocCode?: string) {
+    const loc = targetLoc.trim();
+    if (!loc) return;
+    const dom = businessData.domain || currentUrlRef.current;
+    if (!dom) return;
+
+    setIsRegeneratingCompetitors(true);
+    try {
+      const res = await fetch("/api/analyze-website", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "regenerate",
+          section: "competitors",
+          url: dom,
+          domain: dom,
+          businessType: businessData.businessType,
+          brandName: businessData.brandName,
+          location: loc,
+          locationCode: targetLocCode || businessData.locationCode,
+        }),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.data?.suggestedCompetitors) {
+          const newComps: CompetitorItem[] = json.data.suggestedCompetitors.map(
+            (c: { domain: string; name?: string; market?: string }) => ({
+              domain: c.domain,
+              name: c.name || c.domain,
+              market: c.market || loc,
+              selected: false,
+            })
+          );
+          if (newComps.length > 0) {
+            setCompetitors(newComps);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[onboarding] Failed to fetch competitors for location:", err);
+    } finally {
+      setIsRegeneratingCompetitors(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -576,12 +622,9 @@ export default function NewProjectPage() {
                 return next;
               });
               if (updated.location) {
-                setCompetitors((prevComps) =>
-                  prevComps.map((c) => ({
-                    ...c,
-                    market: detectMarketFromDomain(c.domain, updated.location),
-                  }))
-                );
+                const locMatch = matchLocationOption(updated.location);
+                const finalLoc = locMatch?.country || updated.location;
+                fetchCompetitorsForLocation(finalLoc, locMatch?.code);
               }
             }}
             onRetryAnalysis={() => {
@@ -597,6 +640,8 @@ export default function NewProjectPage() {
             initialCompetitors={competitors}
             userDomain={businessData.domain}
             defaultMarket={businessData.location}
+            isRegenerating={isRegeneratingCompetitors}
+            onRegenerate={() => fetchCompetitorsForLocation(businessData.location, businessData.locationCode)}
             onChange={(updatedComps) => setCompetitors(updatedComps)}
           />
         )}
@@ -624,12 +669,7 @@ export default function NewProjectPage() {
                 locationCode: finalCode,
                 location: finalName,
               }));
-              setCompetitors((prevComps) =>
-                prevComps.map((c) => ({
-                  ...c,
-                  market: detectMarketFromDomain(c.domain, finalName),
-                }))
-              );
+              fetchCompetitorsForLocation(finalName, finalCode);
             }}
             onLanguageChange={(lang) =>
               setBusinessData((prev) => ({ ...prev, language: lang }))
@@ -644,7 +684,14 @@ export default function NewProjectPage() {
           currentStep={2}
           hintText="You can change these settings later."
           onBack={() => setStep(1)}
-          onNext={() => setStep(3)}
+          onNext={() => {
+            const loc = businessData.location;
+            const hasLocalMatch = loc && competitors.some((c) => c.market && c.market.toLowerCase().includes(loc.toLowerCase()));
+            if (loc && (!hasLocalMatch || competitors.length === 0)) {
+              fetchCompetitorsForLocation(loc, businessData.locationCode);
+            }
+            setStep(3);
+          }}
         />
       )}
 
@@ -654,6 +701,10 @@ export default function NewProjectPage() {
           hintText="You can change these settings later."
           onBack={() => setStep(2)}
           onNext={() => setStep(4)}
+          onSkip={() => {
+            setCompetitors((prev) => prev.map((c) => ({ ...c, selected: false })));
+            setStep(4);
+          }}
         />
       )}
 

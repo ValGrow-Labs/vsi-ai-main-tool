@@ -24,6 +24,7 @@ export async function checkChatGPTEntityMatch(opts: {
   clientDomain: string;
   keyword: string;
   response: string;
+  location?: string | null;
 }): Promise<EntityMatchResult | null> {
   const openaiKey = process.env.OPENAI_API_KEY;
   const openrouterKey = process.env.OPENROUTER_API_KEY;
@@ -40,7 +41,7 @@ export async function checkChatGPTEntityMatch(opts: {
 
 Tracked brand: "${opts.clientBrand}"
 Tracked website: ${opts.clientDomain}
-User's query to the AI: "${opts.keyword}"
+${opts.location ? `Target geographic market: ${opts.location}\n` : ""}User's query to the AI: "${opts.keyword}"
 
 AI response text:
 """
@@ -60,40 +61,43 @@ Return ONLY this JSON: { "aboutClient": true | false, "actualEntity": "<short no
   // If Gemini is preferred or OpenAI is absent, try Gemini
   const preferGemini = (process.env.AI_PROVIDER || "").toUpperCase() === "GEMINI";
   if ((preferGemini || !openaiKey) && geminiKey) {
-    try {
-      const gRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${geminiKey}`,
-        {
-          method: "POST",
-          signal: controller.signal,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: `${prompt}\nRespond strictly with valid JSON only.` }] }],
-            generationConfig: { temperature: 0.0, maxOutputTokens: 150 },
-          }),
-        }
-      );
-      if (gRes.ok) {
-        const gData = await gRes.json();
-        const content = gData.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-        if (content) {
-          const match = content.match(/\{[\s\S]*\}/);
-          if (match) {
-            const parsed = JSON.parse(match[0]) as { aboutClient?: boolean; actualEntity?: string; confidence?: string };
-            const conf = parsed.confidence === "high" || parsed.confidence === "medium" || parsed.confidence === "low"
-              ? parsed.confidence
-              : "medium";
-            clearTimeout(timer);
-            return {
-              aboutClient: parsed.aboutClient !== false,
-              actualEntity: parsed.actualEntity ?? "unknown entity",
-              confidence: conf,
-            };
+    const gModels = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash"];
+    for (const m of gModels) {
+      try {
+        const gRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${geminiKey}`,
+          {
+            method: "POST",
+            signal: controller.signal,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ role: "user", parts: [{ text: `${prompt}\nRespond strictly with valid JSON only.` }] }],
+              generationConfig: { temperature: 0.0, maxOutputTokens: 150 },
+            }),
+          }
+        );
+        if (gRes.ok) {
+          const gData = await gRes.json();
+          const content = gData.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          if (content) {
+            const match = content.match(/\{[\s\S]*\}/);
+            if (match) {
+              const parsed = JSON.parse(match[0]) as { aboutClient?: boolean; actualEntity?: string; confidence?: string };
+              const conf = parsed.confidence === "high" || parsed.confidence === "medium" || parsed.confidence === "low"
+                ? parsed.confidence
+                : "medium";
+              clearTimeout(timer);
+              return {
+                aboutClient: parsed.aboutClient !== false,
+                actualEntity: parsed.actualEntity ?? "unknown entity",
+                confidence: conf,
+              };
+            }
           }
         }
+      } catch {
+        continue;
       }
-    } catch {
-      // Fall through to other providers
     }
   }
 

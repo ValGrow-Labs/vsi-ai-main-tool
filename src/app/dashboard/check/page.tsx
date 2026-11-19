@@ -4,9 +4,11 @@ import { displayDomain } from "@/lib/project-types";
 import { loadPageComparisons, loadSiteAudits } from "@/lib/site-audit/load";
 import { formatDate, formatDateTime, formatShortDate } from "@/lib/format";
 import { PageContainer, PageHeader } from "@/components/ui/Page";
-import LiveSearchCheckView from "@/features/diagnosis/components/LiveSearchCheckView";
+import LiveSearchCheckView, { type SuggestedSearchItem } from "@/features/diagnosis/components/LiveSearchCheckView";
 import { Intro } from "@/components/intro/intros";
 import SiteAuditView, { type SiteAuditViewData } from "@/features/diagnosis/components/SiteAuditView";
+import { createClient } from "@/lib/supabase/server";
+import { getDomainAnalysisCache } from "@/lib/domain-cache";
 
 export const metadata: Metadata = { title: "Site Audit" };
 export const dynamic = "force-dynamic";
@@ -16,13 +18,81 @@ export default async function CheckPage({ searchParams }: { searchParams: Promis
   const { active, error } = await requireProjectContext();
 
   if (tab === "quick-check") {
+    let initialSearches: SuggestedSearchItem[] = [];
+
+    if (active) {
+      try {
+        const supabase = await createClient();
+        const { data: kwRows } = await supabase
+          .from("tracked_keywords")
+          .select("keyword, category")
+          .eq("client_id", active.id)
+          .eq("is_active", true)
+          .order("created_at", { ascending: false })
+          .limit(10);
+
+        if (kwRows?.length) {
+          for (const k of kwRows) {
+            if (k.keyword) {
+              initialSearches.push({
+                query: k.keyword,
+                category: "step2_topic",
+                categoryLabel: "Tracked Search",
+              });
+            }
+          }
+        }
+
+        if (active.website) {
+          const cache = await getDomainAnalysisCache(active.website);
+          if (cache) {
+            if (Array.isArray(cache.suggestedTopics)) {
+              for (const t of cache.suggestedTopics.slice(0, 5)) {
+                if (!initialSearches.some((s) => s.query.toLowerCase() === t.toLowerCase())) {
+                  initialSearches.push({
+                    query: t,
+                    category: "step2_topic",
+                    categoryLabel: "Step 2 Topic",
+                  });
+                }
+              }
+            }
+            if (Array.isArray(cache.geoTopics)) {
+              for (const g of cache.geoTopics.slice(0, 4)) {
+                if (!initialSearches.some((s) => s.query.toLowerCase() === g.toLowerCase())) {
+                  initialSearches.push({
+                    query: g,
+                    category: "ai_prompt",
+                    categoryLabel: "AI Overview Prompt",
+                  });
+                }
+              }
+            }
+            if (Array.isArray(cache.suggestedKeywords)) {
+              for (const sk of cache.suggestedKeywords.slice(0, 4)) {
+                if (!initialSearches.some((s) => s.query.toLowerCase() === sk.keyword.toLowerCase())) {
+                  initialSearches.push({
+                    query: sk.keyword,
+                    category: "commercial",
+                    categoryLabel: "High-Intent Search",
+                  });
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("[check/page] failed to load initial searches:", err);
+      }
+    }
+
     return (
       <PageContainer>
         <PageHeader
           title="Check a search"
           description="See right now who Google and its AI answer show for any search, and whether your business is among them."
         />
-        <LiveSearchCheckView defaultProject={active} />
+        <LiveSearchCheckView defaultProject={active} initialSearches={initialSearches} />
       </PageContainer>
     );
   }

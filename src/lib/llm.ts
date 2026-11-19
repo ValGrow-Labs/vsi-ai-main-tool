@@ -125,7 +125,8 @@ export async function callGemini(
   apiKey: string,
   maxTokens = 1200
 ): Promise<{ content: string | null; rateLimited: boolean }> {
-  const models = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash"];
+  const models = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash"];
+  let rateLimited = false;
   for (const model of models) {
     try {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
@@ -147,7 +148,7 @@ export async function callGemini(
         signal: AbortSignal.timeout(30_000),
       });
       if (!res.ok) {
-        if (res.status === 429) return { content: null, rateLimited: true };
+        if (res.status === 429) rateLimited = true;
         continue;
       }
       const data = await res.json().catch(() => null);
@@ -157,7 +158,7 @@ export async function callGemini(
       continue;
     }
   }
-  return { content: null, rateLimited: false };
+  return { content: null, rateLimited };
 }
 
 export async function callOpenAI(

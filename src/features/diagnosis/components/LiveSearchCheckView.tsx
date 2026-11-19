@@ -11,7 +11,13 @@ import { normaliseDomain } from "@/lib/url-input";
 import { useActiveProject } from "@/components/layout/ProjectProvider";
 import type { ProjectSummary } from "@/lib/project-types";
 import { matchLocationOption } from "@/components/project-creation/location";
-import { Search, Link2, Building2, MapPin, CheckCircle2, AlertCircle, XCircle, Loader2, ArrowRight, ChevronDown, TrendingUp, MessageSquareText } from "lucide-react";
+import { Search, Link2, Building2, MapPin, CheckCircle2, AlertCircle, XCircle, Loader2, ArrowRight, ChevronDown, TrendingUp, MessageSquareText, Sparkles, RotateCw } from "lucide-react";
+
+export interface SuggestedSearchItem {
+  query: string;
+  category: "step2_topic" | "ai_prompt" | "commercial";
+  categoryLabel: string;
+}
 
 type CitationMap = Record<string, CitationContent | "loading" | "error">;
 
@@ -32,7 +38,13 @@ const GAP_STYLES: Record<string, { border: string; bg: string; badge: string; do
 
 const getGapStyle = (label: string) => GAP_STYLES[label] ?? GAP_STYLES.weak_double_loss;
 
-export default function LiveSearchCheckView({ defaultProject }: { defaultProject?: ProjectSummary | null } = {}) {
+export default function LiveSearchCheckView({
+  defaultProject,
+  initialSearches = [],
+}: {
+  defaultProject?: ProjectSummary | null;
+  initialSearches?: SuggestedSearchItem[];
+} = {}) {
   const searchParams = useSearchParams();
   const contextProject = useActiveProject();
   const project = defaultProject || contextProject;
@@ -60,6 +72,73 @@ export default function LiveSearchCheckView({ defaultProject }: { defaultProject
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<RunCheckResult | null>(null);
   const [citationMap, setCitationMap] = useState<CitationMap>({});
+
+  const [suggestedSearches, setSuggestedSearches] = useState<SuggestedSearchItem[]>(initialSearches);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [selectedFilter, setSelectedFilter] = useState<"all" | "step2_topic" | "ai_prompt" | "commercial">("all");
+
+  useEffect(() => {
+    if (initialSearches.length > 0) {
+      setSuggestedSearches(initialSearches);
+      return;
+    }
+    const targetDomain = domain || (project?.website ?? "").replace(/^https?:\/\//, "").replace(/\/$/, "");
+    if (targetDomain) {
+      fetchSuggestedSearches(false);
+    }
+  }, [project?.id, project?.website]);
+
+  async function fetchSuggestedSearches(isFresh = false) {
+    const targetDomain = domain || (project?.website ?? "").replace(/^https?:\/\//, "").replace(/\/$/, "");
+    if (!targetDomain) return;
+
+    setLoadingSuggestions(true);
+    try {
+      const countryLabel = LOCATIONS[location]?.label || "United States";
+      const res = await fetch("/api/check/suggest-searches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          domain: targetDomain,
+          brandName: brand || project?.brandName || project?.name,
+          country: countryLabel,
+          projectId: project?.id,
+          fresh: isFresh,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.searches) && data.searches.length > 0) {
+          setSuggestedSearches(data.searches);
+        }
+      }
+    } catch (e) {
+      console.warn("[LiveSearchCheckView] failed to fetch suggested searches:", e);
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  }
+
+  function handleSelectSearch(query: string, autoRun = false) {
+    setKeyword(query);
+    setError(null);
+    const searchInput = document.getElementById("check-keyword");
+    if (searchInput) {
+      searchInput.focus();
+      searchInput.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    if (autoRun) {
+      setTimeout(() => {
+        const form = document.querySelector("form");
+        if (form) form.requestSubmit();
+      }, 100);
+    }
+  }
+
+  const filteredSearches =
+    selectedFilter === "all"
+      ? suggestedSearches
+      : suggestedSearches.filter((s) => s.category === selectedFilter);
 
   useEffect(() => {
     if (project) {
@@ -147,7 +226,7 @@ export default function LiveSearchCheckView({ defaultProject }: { defaultProject
     <div className="space-y-8 pb-16">
 
       {/* ── 1. MAIN SEARCH CARD ── */}
-      <div className="bg-surface dark:bg-surface rounded-panel border border-line p-6 sm:p-8">
+      <div className="bg-surface dark:bg-surface rounded-panel border border-line p-4 sm:p-6 md:p-8">
 
         <form onSubmit={handleSubmit}>
           {/* Input Grid */}
@@ -255,7 +334,7 @@ export default function LiveSearchCheckView({ defaultProject }: { defaultProject
             <button
               type="submit"
               disabled={loading}
-              className="flex items-center gap-2 px-6 py-2.5 rounded-control bg-ink hover:bg-ink-2 text-white text-body font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0 cursor-pointer"
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-2.5 rounded-control bg-ink hover:bg-ink-2 text-white text-body font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0 cursor-pointer shadow-2xs"
             >
               {loading ? (
                 <>
@@ -280,6 +359,128 @@ export default function LiveSearchCheckView({ defaultProject }: { defaultProject
           </div>
         )}
       </div>
+
+      {/* ── 2. SUGGESTED SEARCHES & STEP 2 TOPICS ── */}
+      {suggestedSearches.length > 0 && !loading && (
+        <div className="bg-surface dark:bg-surface rounded-panel border border-line p-4 sm:p-6 md:p-7 space-y-5 shadow-2xs">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-line pb-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-brand-strong shrink-0" />
+                <h2 className="text-body font-semibold text-ink">
+                  Recommended Searches for {brand || domain || "Your Business"}
+                </h2>
+                <span className="rounded-control bg-brand-soft px-2 py-0.5 text-caption font-semibold text-brand-strong shrink-0">
+                  {filteredSearches.length} available
+                </span>
+              </div>
+              <p className="text-caption text-ink-3">
+                Select any search query or AI prompt below to test where Google and AI Overviews place your business.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0">
+              {/* Category Filter Tabs */}
+              <div className="flex items-center rounded-control bg-surface-2 p-1 text-caption font-medium border border-line shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setSelectedFilter("all")}
+                  className={`px-2.5 py-1 rounded-control transition-colors cursor-pointer whitespace-nowrap ${
+                    selectedFilter === "all" ? "bg-surface text-ink font-semibold shadow-2xs" : "text-ink-3 hover:text-ink"
+                  }`}
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedFilter("step2_topic")}
+                  className={`px-2.5 py-1 rounded-control transition-colors cursor-pointer whitespace-nowrap ${
+                    selectedFilter === "step2_topic" ? "bg-surface text-ink font-semibold shadow-2xs" : "text-ink-3 hover:text-ink"
+                  }`}
+                >
+                  Step 2 Topics
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedFilter("ai_prompt")}
+                  className={`px-2.5 py-1 rounded-control transition-colors cursor-pointer whitespace-nowrap ${
+                    selectedFilter === "ai_prompt" ? "bg-surface text-ink font-semibold shadow-2xs" : "text-ink-3 hover:text-ink"
+                  }`}
+                >
+                  AI Prompts
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedFilter("commercial")}
+                  className={`px-2.5 py-1 rounded-control transition-colors cursor-pointer whitespace-nowrap ${
+                    selectedFilter === "commercial" ? "bg-surface text-ink font-semibold shadow-2xs" : "text-ink-3 hover:text-ink"
+                  }`}
+                >
+                  High Intent
+                </button>
+              </div>
+
+              {/* Refresh Button */}
+              <button
+                type="button"
+                disabled={loadingSuggestions}
+                onClick={() => fetchSuggestedSearches(true)}
+                title="Generate fresh real search queries with AI"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-control bg-surface-2 hover:bg-brand-soft hover:text-brand-strong border border-line text-caption font-medium text-ink-2 transition-colors disabled:opacity-50 cursor-pointer shrink-0"
+              >
+                <RotateCw className={`h-3.5 w-3.5 ${loadingSuggestions ? "animate-spin text-brand" : ""}`} />
+                <span className="hidden sm:inline">{loadingSuggestions ? "Generating..." : "Refresh"}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Search Pills Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {filteredSearches.map((item, idx) => (
+              <div
+                key={`${item.query}-${idx}`}
+                className="group flex items-start justify-between gap-3 p-3.5 rounded-control border border-line bg-surface-2/40 hover:bg-surface hover:border-brand-strong/40 hover:shadow-sm transition-all"
+              >
+                <button
+                  type="button"
+                  onClick={() => handleSelectSearch(item.query, false)}
+                  className="flex-1 text-left min-w-0 cursor-pointer focus:outline-none"
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <span
+                      className={`text-caption font-medium px-2 py-0.5 rounded-control text-[11px] ${
+                        item.category === "step2_topic"
+                          ? "bg-brand-soft text-brand-strong border border-brand/20"
+                          : item.category === "ai_prompt"
+                          ? "bg-surface-2 text-ink-2 border border-line"
+                          : "bg-positive-soft text-positive border border-positive/20"
+                      }`}
+                    >
+                      {item.categoryLabel}
+                    </span>
+                  </div>
+                  <p className="text-body font-medium text-ink group-hover:text-brand-strong transition-colors line-clamp-2">
+                    {item.query}
+                  </p>
+                </button>
+
+                <div className="flex items-center gap-1 shrink-0 self-center">
+                  <button
+                    type="button"
+                    onClick={() => handleSelectSearch(item.query, true)}
+                    disabled={loading}
+                    title="Run live check immediately"
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-control bg-ink hover:bg-ink-2 text-white text-caption font-semibold transition-all disabled:opacity-40 cursor-pointer shadow-2xs"
+                  >
+                    <span>Check</span>
+                    <ArrowRight size={12} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {!result && !loading && !error && (
         <p className="text-support text-ink-3">

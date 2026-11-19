@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, type FormEvent } from "react";
-import { Shield, Plus, Trash2, Check, AlertCircle } from "lucide-react";
+import { Shield, Plus, Trash2, Check, AlertCircle, RotateCw } from "lucide-react";
 import { motion } from "framer-motion";
 import { validateCompetitorDomain } from "@/lib/project-competitors";
 
@@ -33,6 +33,8 @@ interface CompetitorSelectionProps {
   userDomain: string;
   defaultMarket?: string;
   maxPlanCompetitors?: number;
+  isRegenerating?: boolean;
+  onRegenerate?: () => void;
   onChange: (competitors: CompetitorItem[]) => void;
 }
 
@@ -41,36 +43,28 @@ export function CompetitorSelection({
   userDomain,
   defaultMarket = "",
   maxPlanCompetitors = 10,
+  isRegenerating = false,
+  onRegenerate,
   onChange,
 }: CompetitorSelectionProps) {
   const [items, setItems] = useState<CompetitorItem[]>(() =>
     initialCompetitors.map((c) => ({
       ...c,
-      market: detectMarketFromDomain(c.domain, defaultMarket),
+      market: c.market?.trim() || detectMarketFromDomain(c.domain, defaultMarket),
     }))
   );
   const [manualInput, setManualInput] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  // Sync market of competitors whenever defaultMarket or initialCompetitors change
+  // Sync whenever initialCompetitors changes from outside (e.g. location regeneration)
   useEffect(() => {
-    setItems((prevItems) => {
-      const source = prevItems.length > 0 ? prevItems : initialCompetitors;
-      let changed = false;
-      const updated = source.map((item) => {
-        const newMarket = detectMarketFromDomain(item.domain, defaultMarket);
-        if (newMarket !== item.market) changed = true;
-        return {
-          ...item,
-          market: newMarket,
-        };
-      });
-      if (changed) {
-        onChange(updated);
-      }
-      return updated;
-    });
-  }, [defaultMarket, initialCompetitors, onChange]);
+    setItems(
+      initialCompetitors.map((c) => ({
+        ...c,
+        market: c.market?.trim() || detectMarketFromDomain(c.domain, defaultMarket),
+      }))
+    );
+  }, [initialCompetitors, defaultMarket]);
 
   const selectedCount = items.filter((i) => i.selected).length;
 
@@ -141,13 +135,27 @@ export function CompetitorSelection({
       transition={{ duration: 0.3 }}
       className="space-y-6 py-2"
     >
-      <div className="space-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
-          Competitor websites
-        </h1>
-        <p className="max-w-[70ch] text-base leading-relaxed text-ink-2">
-          Review suggested competitors and choose the websites you want to track in search results and AI overviews.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="space-y-2">
+          <h1 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
+            Competitor websites
+          </h1>
+          <p className="max-w-[70ch] text-base leading-relaxed text-ink-2">
+            Review suggested competitors and choose the websites you want to track in search results and AI overviews.
+          </p>
+        </div>
+
+        {onRegenerate && (
+          <button
+            type="button"
+            disabled={isRegenerating}
+            onClick={onRegenerate}
+            className="flex items-center gap-1.5 self-start sm:self-auto rounded-control bg-surface-2 hover:bg-brand-soft hover:text-brand-strong px-3 py-1.5 text-caption font-medium text-ink-2 border border-line transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+          >
+            <RotateCw className={`h-3.5 w-3.5 ${isRegenerating ? "animate-spin text-brand" : ""}`} />
+            <span>{isRegenerating ? "Finding competitors..." : `Regenerate for ${defaultMarket || "Market"}`}</span>
+          </button>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-panel border border-brand-light bg-brand-soft/60 px-5 py-3.5">
@@ -187,16 +195,17 @@ export function CompetitorSelection({
         <button
           type="submit"
           disabled={!manualInput.trim()}
-          className="flex h-11 items-center gap-1.5 rounded-xl border border-line bg-surface px-4 text-body font-medium text-ink hover:bg-brand-soft hover:text-brand-strong disabled:opacity-40"
+          className="flex h-11 items-center gap-1.5 rounded-xl border border-line bg-surface px-3 sm:px-4 text-body font-medium text-ink hover:bg-brand-soft hover:text-brand-strong disabled:opacity-40 shrink-0 cursor-pointer"
         >
           <Plus className="h-4 w-4" />
-          <span>Add Competitor</span>
+          <span className="hidden sm:inline">Add Competitor</span>
+          <span className="sm:hidden">Add</span>
         </button>
       </form>
 
       {/* Competitor Table / List */}
       <div className="rounded-panel border border-line bg-surface overflow-hidden shadow-2xs">
-        <div className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 border-b border-line bg-surface-2 px-5 py-3 text-caption font-semibold uppercase tracking-wider text-ink-3">
+        <div className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-2.5 sm:gap-4 border-b border-line bg-surface-2 px-3.5 sm:px-5 py-3 text-caption font-semibold uppercase tracking-wider text-ink-3">
           <span className="w-6 text-center">Track</span>
           <span>Competitor</span>
           <span className="text-right">Market</span>
@@ -207,7 +216,7 @@ export function CompetitorSelection({
           {items.map((comp) => (
             <div
               key={comp.domain}
-              className={`grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 px-5 py-3.5 transition-colors ${
+              className={`grid grid-cols-[auto_1fr_auto_auto] items-center gap-2.5 sm:gap-4 px-3.5 sm:px-5 py-3.5 transition-colors ${
                 comp.selected ? "bg-surface" : "bg-surface/50 opacity-75"
               }`}
             >

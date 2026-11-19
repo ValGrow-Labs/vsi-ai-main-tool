@@ -1,6 +1,7 @@
 import { buildBrandTokens, countNameMentions, matchesBrand, mentionsName } from "@/lib/brand-match";
 import { failureReason, type AiCheckStatus, type ProviderFailureReason } from "@/lib/provider-status";
 import { checkChatGPTEntityMatch } from "@/lib/chatgpt-entity-check";
+import { LOCATIONS, type Location } from "@/types/search";
 
 export interface ChatGPTCheckResult {
   checked: boolean;
@@ -105,15 +106,29 @@ function skipped(reason: string, status: AiCheckStatus, failure?: ProviderFailur
   };
 }
 
+export function resolveTargetMarket(loc?: Location | string | null): string | null {
+  if (!loc) return null;
+  const l = loc.toLowerCase().trim();
+  if (l in LOCATIONS) {
+    const entry = LOCATIONS[l as Location];
+    return `${entry.location} (${entry.label})`;
+  }
+  return loc.trim();
+}
+
 async function callGeminiForCheck(
   keyword: string,
   todayLabel: string,
   currentYear: number,
   apiKey: string,
   signal: AbortSignal,
+  targetMarket?: string | null,
 ): Promise<{ text: string | null; model: string }> {
-  const models = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash"];
-  const prompt = `Today's date is ${todayLabel}. The current year is ${currentYear}. Any year you mention in your answer MUST be ${currentYear} or later — never an earlier year. You are a helpful research assistant. When asked a question, answer concisely based on what you know. Reference real businesses, products, or sources where appropriate. Keep the answer under 400 words.\n\nQuestion: ${keyword}`;
+  const models = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash"];
+  const marketContext = targetMarket
+    ? ` The target market / country for this question is ${targetMarket}. Answer specifically from the perspective of users in ${targetMarket}, prioritizing businesses, brands, products, and services that operate in ${targetMarket}.`
+    : "";
+  const prompt = `Today's date is ${todayLabel}. The current year is ${currentYear}. Any year you mention in your answer MUST be ${currentYear} or later — never an earlier year. You are a helpful research assistant. When asked a question, answer concisely based on what you know. Reference real businesses, products, or sources where appropriate.${marketContext} Keep the answer under 400 words.\n\nQuestion: ${keyword}`;
   for (const m of models) {
     try {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`, {
@@ -133,7 +148,7 @@ async function callGeminiForCheck(
       continue;
     }
   }
-  return { text: null, model: "gemini-3.5-flash" };
+  return { text: null, model: "gemini-3.5-flash-lite" };
 }
 
 export async function runChatGPTCheck(opts: {
@@ -142,6 +157,8 @@ export async function runChatGPTCheck(opts: {
   clientDomain: string;
   /** The project's tracked competitors; the only source of competitor mentions. */
   competitors?: ProjectCompetitor[];
+  /** Target market / country (e.g. "ae" | "us" | "uk" | "in" | "lk" | "sg" or country name). */
+  location?: Location | string | null;
 }): Promise<ChatGPTCheckResult> {
   const preferGemini = (process.env.AI_PROVIDER || "").toUpperCase() === "GEMINI";
   const geminiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "").trim();
@@ -165,6 +182,10 @@ export async function runChatGPTCheck(opts: {
   const today = new Date();
   const todayLabel = today.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
   const currentYear = today.getFullYear();
+  const targetMarket = resolveTargetMarket(opts.location);
+  const marketContext = targetMarket
+    ? ` The target market / country for this question is ${targetMarket}. Answer specifically from the perspective of users in ${targetMarket}, prioritizing businesses, brands, products, and services that operate in ${targetMarket}.`
+    : "";
 
   const messages: OpenAIMessage[] = [
     {
@@ -173,7 +194,7 @@ export async function runChatGPTCheck(opts: {
         `Today's date is ${todayLabel}. The current year is ${currentYear}. Any year you mention in your answer MUST be ${currentYear} or later — never an earlier year. ` +
         "You are a helpful research assistant. When asked a question, answer concisely " +
         "based on what you know. Reference real businesses, products, or sources where " +
-        "appropriate. Keep the answer under 400 words.",
+        `appropriate.${marketContext} Keep the answer under 400 words.`,
     },
     { role: "user", content: opts.keyword },
   ];
@@ -185,7 +206,7 @@ export async function runChatGPTCheck(opts: {
 
   // Try Gemini first if user configured AI_PROVIDER=GEMINI or if OpenAI key is missing
   if ((preferGemini || !openaiKey) && geminiKey) {
-    const geminiRes = await callGeminiForCheck(opts.keyword, todayLabel, currentYear, geminiKey, controller.signal);
+    const geminiRes = await callGeminiForCheck(opts.keyword, todayLabel, currentYear, geminiKey, controller.signal, targetMarket);
     if (geminiRes.text) {
       data = { choices: [{ message: { content: geminiRes.text } }] };
       model = geminiRes.model;
@@ -209,7 +230,7 @@ export async function runChatGPTCheck(opts: {
       if (!res.ok) {
         // If OpenAI authentication failed and Gemini key is configured, fallback to Gemini
         if ((res.status === 401 || res.status === 403) && geminiKey) {
-          const geminiRes = await callGeminiForCheck(opts.keyword, todayLabel, currentYear, geminiKey, controller.signal);
+          const geminiRes = await callGeminiForCheck(opts.keyword, todayLabel, currentYear, geminiKey, controller.signal, targetMarket);
           if (geminiRes.text) {
             data = { choices: [{ message: { content: geminiRes.text } }] };
             model = geminiRes.model;
@@ -234,7 +255,7 @@ export async function runChatGPTCheck(opts: {
       }
     } catch (err) {
       if (geminiKey) {
-        const geminiRes = await callGeminiForCheck(opts.keyword, todayLabel, currentYear, geminiKey, controller.signal);
+        const geminiRes = await callGeminiForCheck(opts.keyword, todayLabel, currentYear, geminiKey, controller.signal, targetMarket);
         if (geminiRes.text) {
           data = { choices: [{ message: { content: geminiRes.text } }] };
           model = geminiRes.model;
@@ -301,6 +322,7 @@ export async function runChatGPTCheck(opts: {
         clientDomain: opts.clientDomain,
         keyword: opts.keyword,
         response,
+        location: targetMarket,
       });
       if (verdict) {
         entityMatch = verdict.aboutClient;

@@ -36,7 +36,7 @@ interface MessagesContextProps {
   setEditingDraft: (msg: Message | null) => void;
 }
 
-const MessagesContext = createContext<MessagesContextProps | undefined>(undefined);
+export const MessagesContext = createContext<MessagesContextProps | undefined>(undefined);
 
 export function MessagesProvider({ children }: { children: ReactNode }) {
   const [messages, setMessages] = useState<Message[]>([]);

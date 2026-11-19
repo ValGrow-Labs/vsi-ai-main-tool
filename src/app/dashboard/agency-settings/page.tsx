@@ -109,8 +109,8 @@ export default function AgencySettingsPage() {
   const keywordCap = org?.maxKeywords;
 
   return (
-    <div className="min-h-[calc(100vh-60px)] bg-canvas p-3 sm:p-6 font-sans text-ink">
-      <div className="max-w-[1400px] mx-auto bg-surface rounded-[2rem] p-6 lg:p-8 shadow-overlay border border-line min-h-[calc(100vh-108px)]">
+    <div className="min-h-[calc(100vh-60px)] bg-canvas p-2.5 sm:p-6 font-sans text-ink">
+      <div className="max-w-[1400px] mx-auto bg-surface rounded-2xl sm:rounded-[2rem] p-4 sm:p-6 lg:p-8 shadow-overlay border border-line min-h-[calc(100vh-108px)]">
 
         {/* Header */}
         <div className="flex items-center gap-3 mb-8 border-b border-line pb-6">
@@ -126,13 +126,13 @@ export default function AgencySettingsPage() {
         <div className="flex flex-col lg:flex-row gap-6">
 
           {/* Left Navigation Tabs */}
-          <nav className="lg:w-64 shrink-0">
-            <div className="bg-surface border border-line rounded-panel p-2 space-y-1">
+          <nav className="lg:w-64 shrink-0 overflow-x-auto">
+            <div className="bg-surface border border-line rounded-panel p-1.5 sm:p-2 flex lg:flex-col gap-1 overflow-x-auto">
               {SECTIONS.map(({ id, label, icon: Icon, desc }) => (
                 <button
                   key={id}
                   onClick={() => setActiveSection(id)}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-panel text-body transition-all text-left group cursor-pointer ${
+                  className={`shrink-0 lg:w-full flex items-center gap-2.5 sm:gap-3 px-3 sm:px-4 py-2 sm:py-3 rounded-panel text-body transition-all text-left group cursor-pointer whitespace-nowrap lg:whitespace-normal ${
                     activeSection === id
                       ? "bg-ink text-white font-semibold "
                       : "text-ink-3 hover:text-ink hover:bg-surface-2 border border-transparent"
@@ -141,9 +141,9 @@ export default function AgencySettingsPage() {
                   <Icon className={`w-4 h-4 shrink-0 ${activeSection === id ? "text-white" : "text-ink-3 group-hover:text-ink"}`} />
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold leading-none">{label}</p>
-                    <p className={`text-caption mt-0.5 leading-none ${activeSection === id ? "text-white/80 font-medium" : "text-ink-3"}`}>{desc}</p>
+                    <p className={`hidden sm:block text-caption mt-1 leading-none ${activeSection === id ? "text-white/80 font-medium" : "text-ink-3"}`}>{desc}</p>
                   </div>
-                  {activeSection === id && <ChevronRight className="w-3.5 h-3.5 text-white shrink-0" />}
+                  {activeSection === id && <ChevronRight className="hidden lg:block w-3.5 h-3.5 text-white shrink-0" />}
                 </button>
               ))}
             </div>

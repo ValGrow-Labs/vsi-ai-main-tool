@@ -75,6 +75,13 @@ export default async function ClientReportsPage({ params }: { params: Promise<{ 
   });
   const hasData = status.audits > 0 || status.checks > 0;
 
+  const isMissingTable =
+    !!error &&
+    (error.code === "PGRST205" ||
+      error.code === "42P01" ||
+      error.message?.includes("schema cache") ||
+      error.message?.includes("does not exist"));
+
   return (
     <PageContainer>
       <PageHeader
@@ -84,7 +91,11 @@ export default async function ClientReportsPage({ params }: { params: Promise<{ 
         actions={rows.length > 0 ? <GenerateReportButton clientId={id} /> : undefined}
       />
 
-      {error ? (
+      {isMissingTable ? (
+        <Notice tone="info" title="Reports table setup required">
+          The reports table hasn&apos;t been created in your Supabase database yet. Run the SQL migration in your Supabase SQL editor to enable report generation.
+        </Notice>
+      ) : error ? (
         <Notice tone="critical" title="We couldn't load your reports right now.">
           Refresh the page to try again.
         </Notice>

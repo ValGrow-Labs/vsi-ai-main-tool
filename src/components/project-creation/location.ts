@@ -29,7 +29,7 @@ export function matchLocationOption(text: string | undefined | null): LocationOp
       ((target.includes("singapore") || target === "sg" || target === "sgp") && l.code === "sg") ||
       ((target.includes("india") || target === "in" || target === "ind" || target === "bharat") && l.code === "in") ||
       ((target.includes("united states") || target === "us" || target === "usa" || target === "u.s." || target === "u.s.a.") && l.code === "us") ||
-      ((target.includes("kingdom") || target === "uk" || target === "u.k." || target.includes("britain") || target.includes("england")) && l.code === "uk") ||
+      ((target.includes("kingdom") || target === "uk" || target === "u.k." || target === "gb" || target === "gbr" || target.includes("britain") || target.includes("england")) && l.code === "uk") ||
       ((target.includes("lanka") || target === "lk") && l.code === "lk")
   );
 }

@@ -403,11 +403,11 @@ export default function ChatFloating() {
         </button>
       )}
 
-      {/* Floating Chat Panel (350px x 490px, Slide Up + Fade) */}
+      {/* Floating Chat Panel */}
       {open && (
         <div
-          className={`fixed bottom-5 right-5 z-40 w-[350px] max-w-[calc(100vw-32px)] transition-all duration-300 ${
-            isMinimized ? "h-[54px]" : "h-[490px] max-h-[calc(100vh-64px)]"
+          className={`fixed bottom-3 right-3 sm:bottom-5 sm:right-5 z-40 w-[360px] max-w-[calc(100vw-24px)] transition-all duration-300 ${
+            isMinimized ? "h-[54px]" : "h-[490px] max-h-[calc(100dvh-80px)]"
           } flex flex-col rounded-panel shadow-overlay overflow-hidden border border-line bg-surface animate-in fade-in slide-in-from-bottom-5`}
         >
           {/* Header */}

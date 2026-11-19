@@ -206,7 +206,7 @@ function cleanKeywords(value: unknown): ExtractedWebsiteData["suggestedKeywords"
   return out;
 }
 
-function cleanCompetitors(value: unknown, ownDomain: string): ExtractedWebsiteData["suggestedCompetitors"] {
+export function cleanCompetitors(value: unknown, ownDomain: string): ExtractedWebsiteData["suggestedCompetitors"] {
   if (!Array.isArray(value)) return [];
   const out: ExtractedWebsiteData["suggestedCompetitors"] = [];
   for (const raw of value) {

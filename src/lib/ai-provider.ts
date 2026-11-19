@@ -170,37 +170,28 @@ async function streamGemini(
     })),
   ];
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse&key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents,
-        generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
-      }),
-    }
-  );
-
-  if (!res.ok || !res.body) {
-    const resFallback = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:streamGenerateContent?alt=sse&key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents,
-          generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
-        }),
+  const models = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash"];
+  for (const model of models) {
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents,
+            generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
+          }),
+        }
+      );
+      if (res.ok && res.body) {
+        return parseGeminiSSE(res.body, callbacks);
       }
-    );
-    if (!resFallback.ok || !resFallback.body) {
-      throw new Error(`Gemini HTTP ${res.status}`);
+    } catch {
+      continue;
     }
-    return parseGeminiSSE(resFallback.body, callbacks);
   }
-
-  return parseGeminiSSE(res.body, callbacks);
+  throw new Error("All Gemini models unavailable or rate limited.");
 }
 
 async function parseGeminiSSE(stream: ReadableStream<Uint8Array>, callbacks: StreamCallbacks) {

@@ -8,6 +8,7 @@ import { failureReason, type ProviderFailureReason } from "@/lib/provider-status
 import { getDomainAnalysisCache, saveDomainAnalysisCache } from "@/lib/domain-cache";
 import {
   buildProfile,
+  cleanCompetitors,
   deriveFromDomain,
   parseModelJson,
   unavailableMessage,
@@ -65,8 +66,13 @@ function buildPrompt(
 
   return `Analyze this website content and extract business intelligence for search marketing.
 Use what the content shows.${thinNotice}
-If a field cannot be determined, use null (or an empty list). Never guess a location, and only list
-competitors whose real website domain you know; otherwise return an empty list.
+Determine the primary geographic country/market where this business operates (e.g. from addresses, phone numbers, contact info, currencies, office locations, or ccTLD).
+Based on this business model and its specific geographic market, identify 3 to 5 REAL commercial competitor companies operating IN THAT SAME COUNTRY OR REGIONAL MARKET.
+CRITICAL RULES FOR COMPETITORS:
+1. Every competitor MUST be an actual, active business operating in the same market or country as this website.
+2. Do NOT output generic global/Silicon Valley mega-corporations (e.g. C3.ai, DataRobot, OpenAI, IBM) unless the business is specifically located in the United States. If the business is in the UAE, suggest UAE competitors; if in Sri Lanka, suggest Sri Lankan competitors; if in India, suggest Indian competitors; if in Singapore, suggest Singaporean competitors.
+3. Every domain must be an active, live commercial domain of an existing business. Never output placeholder domains or acquired/defunct companies (e.g. Element AI).
+If a field cannot be determined, use null (or an empty list). Never guess an unknown country.
 
 Website Domain: ${domain}
 Website Title: ${title ?? "N/A"}
@@ -99,10 +105,10 @@ Return JSON in this EXACT structure:
   "aboutBusiness": "2-3 concise sentences summarizing what the business does and sells.",
   "targetCustomers": ["Audience 1", "Audience 2", "Audience 3", "Audience 4"],
   "suggestedCompetitors": [
-    { "domain": "competitor1.com", "name": "Competitor One", "market": "Country / Global" }
+    { "domain": "realcompetitor.com", "name": "Company Name", "market": "Country / Global" }
   ],
   "geoTopics": ["Topic / Query 1 for AI search", "Topic / Query 2 for AI search"]
-}`;
+};`;
 }
 
 async function callAvailableLLM(
@@ -115,12 +121,14 @@ async function callAvailableLLM(
 ): Promise<{ content: string | null; rateLimited: boolean }> {
   const preferGemini = (process.env.AI_PROVIDER || "").toUpperCase() === "GEMINI";
   const geminiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)?.trim();
+  let rateLimited = false;
 
-  // Try Gemini first if user configured AI_PROVIDER=GEMINI
-  if (preferGemini && geminiKey) {
+  // Try Gemini first if user configured AI_PROVIDER=GEMINI or if only Gemini is configured
+  if (geminiKey && (preferGemini || !openaiKey)) {
     try {
       const res = await callGemini(system, prompt, geminiKey, maxTokens);
       if (res?.content) return res;
+      if (res?.rateLimited) rateLimited = true;
     } catch (err) {
       console.warn("[analyze-website] Gemini call error:", err);
     }
@@ -131,27 +139,30 @@ async function callAvailableLLM(
     try {
       const res = await callOpenAI(OPENAI_ANALYSIS_MODEL, system, prompt, openaiKey, maxTokens);
       if (res && (res.content || (!groqKey && !geminiKey && res.rateLimited))) return res;
+      if (res?.rateLimited) rateLimited = true;
     } catch (err) {
       if (!groqKey && !geminiKey) throw err;
       console.warn("[analyze-website] OpenAI call error, attempting fallback:", err);
     }
   }
 
-  // 2. Try Gemini fallback if key exists
-  if (geminiKey) {
+  // 2. Try Gemini fallback if key exists and was not tried first
+  if (geminiKey && !preferGemini && openaiKey) {
     try {
       const res = await callGemini(system, prompt, geminiKey, maxTokens);
       if (res?.content) return res;
+      if (res?.rateLimited) rateLimited = true;
     } catch (err) {
       console.warn("[analyze-website] Gemini fallback error:", err);
     }
   }
 
-  // 3. Try Groq if key exists (either as primary or fallback)
+  // 3. Try Groq if key exists
   if (groqKey) {
     try {
       const res = await callGroq(GROQ_ANALYSIS_MODEL, system, prompt, groqKey, maxTokens);
       if (res?.content) return res;
+      if (res?.rateLimited) rateLimited = true;
     } catch (err) {
       console.warn("[analyze-website] Groq call error:", err);
     }
@@ -162,22 +173,72 @@ async function callAvailableLLM(
     return await callOpenRouter(MODEL, system, prompt, openrouterKey, maxTokens);
   }
 
-  return { content: null, rateLimited: true };
+  return { content: null, rateLimited };
+}
+
+async function enrichCompetitorsIfNeeded(
+  profile: ExtractedWebsiteData,
+  domain: string,
+  openaiKey?: string,
+  groqKey?: string,
+  openrouterKey?: string
+) {
+  if (profile.suggestedCompetitors && profile.suggestedCompetitors.length > 0) return;
+  const targetMarket = profile.location || "Global";
+
+  try {
+    const compPrompt = `You are a market intelligence expert.
+For a company named "${profile.brandName || domain}" (domain: ${domain}, Industry/Business Type: ${profile.businessType || "Commercial Services"}) targeting the market/country: "${targetMarket}".
+Identify 4 REAL, highly active commercial competitor companies operating in "${targetMarket}" offering similar products, services, or solutions.
+CRITICAL RULES:
+1. Every competitor MUST be an actual, active business operating in "${targetMarket}".
+2. Do NOT output generic Silicon Valley mega-corps (e.g. C3.ai, DataRobot, OpenAI, IBM) unless the requested market is United States.
+3. Every domain must be a real, live company website (e.g. if Sri Lanka: wso2.com, 99x.io, zone24x7.com, ifs.com; if UAE: core42.ai, provensolution.com, appinventiv.com, beinex.com; if India: tcs.com, infosys.com, zoho.com; if quick commerce India: zepto.com, swiggy.com, blinkit.com).
+4. Never output defunct or acquired companies (e.g. Element AI).
+
+Return JSON strictly:
+{
+  "suggestedCompetitors": [
+    { "domain": "realcompetitor.com", "name": "Company Name", "market": "${targetMarket}" }
+  ]
+}`;
+    const compRes = await callAvailableLLM(
+      "You are an expert market intelligence and SEO analyst. Respond strictly in valid JSON.",
+      compPrompt,
+      600,
+      openaiKey,
+      groqKey,
+      openrouterKey
+    );
+    if (compRes.content) {
+      const compJson = parseModelJson(compRes.content);
+      if (compJson && (compJson.suggestedCompetitors || compJson.competitors)) {
+        const cleaned = cleanCompetitors(compJson.suggestedCompetitors ?? compJson.competitors, domain);
+        if (cleaned.length > 0) {
+          profile.suggestedCompetitors = cleaned;
+        }
+      }
+    }
+  } catch (compErr) {
+    console.warn("[analyze-website] competitor fallback lookup failed:", compErr);
+  }
 }
 
 async function handleRegeneration(
   body: {
     domain: string;
-    section: "about" | "topics" | "advantage" | "all";
+    section: "about" | "topics" | "advantage" | "competitors" | "all";
     businessType?: string;
     brandName?: string;
+    location?: string;
+    locationCode?: string;
     currentTopics?: string[];
   },
   openaiKey?: string,
   groqKey?: string,
   openrouterKey?: string
 ) {
-  const { domain, section, businessType = "", brandName = "", currentTopics = [] } = body;
+  const { domain, section, businessType = "", brandName = "", currentTopics = [], location = "" } = body;
   const brand = brandName || domain;
   const system = "You are an expert AI business and SEO analyst. Respond ONLY with valid JSON.";
 
@@ -201,6 +262,23 @@ Return JSON:
 {
   "competitiveAdvantage": "One punchy sentence describing key edge or value proposition."
 }`;
+  } else if (section === "competitors") {
+    const loc = location || "Global";
+    prompt = `You are a market intelligence expert.
+For a company named "${brand}" (domain: ${domain}, Industry/Business Type: ${businessType || "Commercial Services"}) targeting the market/country: "${loc}".
+Identify 4 REAL, highly active commercial competitor companies operating in "${loc}" offering similar products, services, or solutions.
+CRITICAL RULES:
+1. Every competitor MUST be an actual, active business operating in "${loc}".
+2. Do NOT output generic Silicon Valley mega-corps (e.g. C3.ai, DataRobot, OpenAI, IBM) unless the requested market is United States.
+3. Every domain must be a real, live company website (e.g. if Sri Lanka: wso2.com, 99x.io, zone24x7.com, ifs.com; if UAE: core42.ai, provensolution.com, appinventiv.com, beinex.com; if India: tcs.com, infosys.com, zoho.com; if quick commerce India: zepto.com, swiggy.com, blinkit.com).
+4. Never output defunct or acquired companies (e.g. Element AI).
+
+Return JSON strictly:
+{
+  "suggestedCompetitors": [
+    { "domain": "realcompetitor.com", "name": "Company Name", "market": "${loc}" }
+  ]
+}`;
   } else {
     return NextResponse.json({ success: false, error: "Invalid section" }, { status: 400 });
   }
@@ -212,6 +290,11 @@ Return JSON:
   }
 
   const json = parseModelJson(res.content);
+  if (section === "competitors" && json) {
+    const rawComps = json.suggestedCompetitors ?? json.competitors;
+    const cleaned = cleanCompetitors(rawComps, domain);
+    return NextResponse.json({ success: true, section, data: { suggestedCompetitors: cleaned } });
+  }
   return NextResponse.json({ success: true, section, data: json });
 }
 
@@ -221,10 +304,13 @@ export async function POST(req: NextRequest) {
 
   let body: {
     url?: unknown;
+    domain?: string;
     action?: string;
-    section?: "about" | "topics" | "advantage" | "all";
+    section?: "about" | "topics" | "advantage" | "competitors" | "all";
     businessType?: string;
     brandName?: string;
+    location?: string;
+    locationCode?: string;
     currentTopics?: string[];
   };
   try {
@@ -243,7 +329,11 @@ export async function POST(req: NextRequest) {
     if (!openaiKey && !groqKey && !openrouterKey && !geminiKey) {
       return NextResponse.json({ success: false, error: "AI service not configured." }, { status: 503 });
     }
-    const rawUrl = typeof body.url === "string" ? body.url.trim() : "";
+    const rawUrl = typeof body.domain === "string" && body.domain.trim()
+      ? body.domain.trim()
+      : typeof body.url === "string"
+      ? body.url.trim()
+      : "";
     const parsed = normaliseDomain(rawUrl.startsWith("http") ? rawUrl : `https://${rawUrl}`);
     return handleRegeneration(
       {
@@ -251,6 +341,8 @@ export async function POST(req: NextRequest) {
         section: body.section,
         businessType: body.businessType,
         brandName: body.brandName,
+        location: body.location,
+        locationCode: body.locationCode,
         currentTopics: body.currentTopics,
       },
       openaiKey,
@@ -279,7 +371,7 @@ export async function POST(req: NextRequest) {
     req.headers.get("accept")?.includes("text/event-stream");
 
   // No analysis service: say so.
-  if (!openaiKey && !groqKey && !openrouterKey) {
+  if (!openaiKey && !groqKey && !openrouterKey && !geminiKey) {
     return unavailable(domain, "PROVIDER_NOT_CONFIGURED", "analysis");
   }
 
@@ -460,6 +552,9 @@ export async function POST(req: NextRequest) {
             return;
           }
 
+          // Ensure competitor suggestions exist
+          await enrichCompetitorsIfNeeded(profile, domain, openaiKey, groqKey, openrouterKey);
+
           // Save to Supabase 7-day cache
           saveDomainAnalysisCache(domain, profile).catch((e) =>
             console.warn("[analyze-website] cache save error:", e)
@@ -527,6 +622,8 @@ export async function POST(req: NextRequest) {
   const json = parseModelJson(content);
   const profile = json ? buildProfile(json, domain, { title: page.title, description: page.description }) : null;
   if (!profile) return unavailable(domain, "INVALID_RESPONSE", "analysis");
+
+  await enrichCompetitorsIfNeeded(profile, domain, openaiKey, groqKey, openrouterKey);
 
   // Save to Supabase cache
   saveDomainAnalysisCache(domain, profile).catch((e) =>

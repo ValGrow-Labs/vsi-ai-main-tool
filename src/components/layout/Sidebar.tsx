@@ -3,13 +3,14 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useContext, useSyncExternalStore } from "react";
 import {
   Check,
   ChevronsUpDown,
   FolderOpen,
   HelpCircle,
   LogOut,
+  Mail,
   Menu,
   MessageCircle,
   PanelLeftClose,
@@ -20,6 +21,8 @@ import {
   Shield,
   X,
 } from "lucide-react";
+import NotificationDropdown from "@/components/NotificationDropdown";
+import { MessagesContext } from "@/contexts/MessagesContext";
 import type { UserRole } from "@/lib/auth";
 import { logoutAndRedirect } from "@/lib/auth-client";
 import { displayDomain, type ProjectSummary } from "@/lib/project-types";
@@ -63,6 +66,8 @@ export default function Sidebar({ agencyName, projects, activeProjectId, userRol
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const collapsed = useSyncExternalStore(subscribeCollapsed, readCollapsed, () => false);
+  const messagesCtx = useContext(MessagesContext);
+  const unreadCount = messagesCtx?.unreadCount ?? 0;
 
   // Close the mobile menu whenever the page changes.
   const navKey = `${pathname}?${searchParams.toString()}`;
@@ -223,17 +228,44 @@ export default function Sidebar({ agencyName, projects, activeProjectId, userRol
   return (
     <>
       {/* Mobile top bar */}
-      <div className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-surface px-4 md:hidden">
-        <button
-          type="button"
-          onClick={() => setMobileOpen(true)}
-          className="-ml-1.5 rounded-control p-1.5 text-ink-2 hover:bg-surface-2"
-          aria-label="Open menu"
-        >
-          <Menu size={20} strokeWidth={1.75} />
-        </button>
-        <Image src="/vg-logo.png" alt="" width={22} height={22} className="rounded" />
-        <span className="min-w-0 truncate text-body font-medium text-ink">{active?.name ?? "VSI"}</span>
+      <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-line bg-surface px-3 sm:px-4 md:hidden">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setMobileOpen(true)}
+            className="-ml-1 rounded-control p-1.5 text-ink-2 hover:bg-surface-2 cursor-pointer"
+            aria-label="Open menu"
+          >
+            <Menu size={20} strokeWidth={1.75} />
+          </button>
+          <Image src="/vg-logo.png" alt="VSI" width={24} height={24} className="rounded shrink-0" />
+          <span className="min-w-0 truncate text-body font-semibold text-ink">{active?.name ?? "VSI"}</span>
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0">
+          <NotificationDropdown />
+          <Link
+            href="/dashboard/messages"
+            className="relative rounded-control p-2 text-ink-3 hover:bg-surface-2 hover:text-ink cursor-pointer"
+            aria-label={unreadCount > 0 ? `Messages, ${unreadCount} unread` : "Messages"}
+          >
+            <Mail size={17} strokeWidth={1.75} />
+            {unreadCount > 0 && (
+              <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-ink px-1 text-[10px] font-semibold text-white tabular">
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </span>
+            )}
+          </Link>
+          <button
+            type="button"
+            onClick={() => setMobileOpen(true)}
+            className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-soft text-caption font-semibold uppercase text-brand-strong ring-1 ring-brand/20 ml-1 cursor-pointer"
+            aria-label="Account & Navigation menu"
+            title={userEmail}
+          >
+            {userEmail.charAt(0) || "?"}
+          </button>
+        </div>
       </div>
 
       {mobileOpen && (

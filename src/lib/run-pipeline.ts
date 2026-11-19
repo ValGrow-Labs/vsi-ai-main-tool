@@ -270,7 +270,7 @@ async function runKeyword(
       runRank ? Promise.allSettled([fetchRank(kw.keyword, kw.domain, kw.location, kw.brand ?? "")]).then((r) => r[0]) : Promise.resolve(null),
       runAI ? Promise.allSettled([fetchAIO(kw.keyword, kw.domain, kw.brand ?? "", kw.location)]).then((r) => r[0]) : Promise.resolve(null),
       runChatGPT
-        ? Promise.allSettled([runChatGPTCheck({ keyword: kw.keyword, clientBrand: kw.brand ?? "", clientDomain: kw.domain, competitors })]).then((r) => r[0])
+        ? Promise.allSettled([runChatGPTCheck({ keyword: kw.keyword, clientBrand: kw.brand ?? "", clientDomain: kw.domain, competitors, location: kw.location })]).then((r) => r[0])
         : Promise.resolve(null),
     ]);
 
